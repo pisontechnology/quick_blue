@@ -160,6 +160,16 @@ public class QuickBlueMacosPlugin: NSObject, FlutterPlugin {
       }
       peripheral.openL2CAPChannel(psm)
       result(nil)
+    case "_l2cap_write":
+      let arguments = call.arguments as! Dictionary<String, Any>
+      let deviceId = arguments["deviceId"] as! String
+      let data = arguments["data"] as! NSData
+        guard let streamDelegate = streamDelegates[deviceId] else {
+            result(FlutterError(code: "IllegalArgument", message: "No stream delegate for deviceId:\(deviceId)", details: nil))
+            return
+        }
+        streamDelegate.dataToSend.append(contentsOf: data)
+        result(nil)
     default:
       result(FlutterMethodNotImplemented)
     }
@@ -292,7 +302,6 @@ class L2CapStreamDelegate: NSObject, StreamDelegate {
     
     var streamOpenCount = 0
     var dataToSend = Data()
-    var dataReceived = Data()
 
     init(channel: CBL2CAPChannel, openedCallback: @escaping () -> (), streamCallback: @escaping (Data) -> (), closedCallback: @escaping () -> ()) {
         self.channel = channel

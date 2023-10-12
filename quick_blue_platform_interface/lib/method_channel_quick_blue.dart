@@ -196,7 +196,7 @@ class _L2capSink implements EventSink<Uint8List> {
 
   @override
   void add(Uint8List event) {
-    channel.invokeMethod('l2cap', {
+    channel.invokeMethod('_l2cap_write', {
       'deviceId': deviceId,
       'data': event,
     });
