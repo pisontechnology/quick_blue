@@ -163,12 +163,12 @@ public class QuickBlueMacosPlugin: NSObject, FlutterPlugin {
     case "_l2cap_write":
       let arguments = call.arguments as! Dictionary<String, Any>
       let deviceId = arguments["deviceId"] as! String
-      let data = arguments["data"] as! NSData
+      let data = arguments["data"] as! FlutterStandardTypedData
         guard let streamDelegate = streamDelegates[deviceId] else {
             result(FlutterError(code: "IllegalArgument", message: "No stream delegate for deviceId:\(deviceId)", details: nil))
             return
         }
-        streamDelegate.dataToSend.append(contentsOf: data)
+        streamDelegate.dataToSend.append(contentsOf: data.data)
         result(nil)
     default:
       result(FlutterMethodNotImplemented)
