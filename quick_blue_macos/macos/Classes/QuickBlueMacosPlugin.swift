@@ -93,6 +93,9 @@ public class QuickBlueMacosPlugin: NSObject, FlutterPlugin {
       if (peripheral.state != .disconnected) {
         manager.cancelPeripheralConnection(peripheral)
       }
+        if let streamDelegate = streamDelegates[deviceId] {
+            streamDelegate.close()
+        }
       result(nil)
     case "discoverServices":
       let arguments = call.arguments as! Dictionary<String, Any>
@@ -160,6 +163,16 @@ public class QuickBlueMacosPlugin: NSObject, FlutterPlugin {
       }
       peripheral.openL2CAPChannel(psm)
       result(nil)
+    case "closeL2cap":
+        let arguments = call.arguments as! Dictionary<String, Any>
+        let deviceId = arguments["deviceId"] as! String
+        guard let streamDelegate = streamDelegates[deviceId] else {
+            result(FlutterError(code: "IllegalArgument", message: "No stream delegate for deviceId:\(deviceId)", details: nil))
+            return
+        }
+        streamDelegate.close()
+        streamDelegates.removeValue(forKey: deviceId)
+        result(nil)
     case "_l2cap_write":
       let arguments = call.arguments as! Dictionary<String, Any>
       let deviceId = arguments["deviceId"] as! String
@@ -168,7 +181,7 @@ public class QuickBlueMacosPlugin: NSObject, FlutterPlugin {
             result(FlutterError(code: "IllegalArgument", message: "No stream delegate for deviceId:\(deviceId)", details: nil))
             return
         }
-        streamDelegate.dataToSend.append(contentsOf: data.data)
+        streamDelegate.write(data: data.data)
         result(nil)
     default:
       result(FlutterMethodNotImplemented)
@@ -263,8 +276,6 @@ extension QuickBlueMacosPlugin: CBPeripheralDelegate {
   }
 
   public func peripheral(_ peripheral: CBPeripheral, didOpen channel: CBL2CAPChannel?, error: Error?) {
-    NSLog("didOpenL2CAPChannel \(String(describing: channel)) error: \(String(describing: error))")
-
     guard let channel = channel else {
         return
     }
@@ -321,8 +332,21 @@ class L2CapStreamDelegate: NSObject, StreamDelegate {
         self.outputStream!.schedule(in: .main, forMode: .default)
         self.outputStream!.open()
     }
+    
+    func close() {
+        self.inputStream?.close()
+        self.outputStream?.close()
+        
+        self.inputStream?.remove(from: .main, forMode: .default)
+        self.outputStream?.remove(from: .main, forMode: .default)
+        
+        self.inputStream?.delegate = nil
+        self.outputStream?.delegate = nil
+        
+        self.channel = nil
+    }
 
-    func l2capCheckSend() {
+    func checkSend() {
         while dataToSend.count > 0 {
             if !outputStream!.hasSpaceAvailable {
                 break;
@@ -330,15 +354,13 @@ class L2CapStreamDelegate: NSObject, StreamDelegate {
             let n = dataToSend.withUnsafeBytes { outputStream!.write(($0.baseAddress?.assumingMemoryBound(to: UInt8.self))!, maxLength: dataToSend.count) }
             if n > 0 {
                 dataToSend.removeSubrange(0 ..< n)
-            } else {
-                NSLog("L2CAP - no data sent")
             }
-//            NSLog("L2CAP send \(n) bytes")
         }
     }
-
-    func checkSend() {
-        self.l2capCheckSend()
+    
+    func write(data: Data) {
+        dataToSend.append(data)
+        checkSend()
     }
     
     @MainActor
@@ -365,19 +387,15 @@ class L2CapStreamDelegate: NSObject, StreamDelegate {
     func stream(_ aStream: Stream, handle eventCode: Stream.Event) {
         switch (eventCode) {
             case .openCompleted:
-//                NSLog("NSStreamEventOpenCompleted")
                 self.streamOpenCount += 1
                 if self.streamOpenCount == 2 {
-                    NSLog("NSStreamEventOpenCompleted 2")
                     self.streamOpenCompleted()
                 }
             case .hasBytesAvailable:
-//                NSLog("NSStreamEventHasBytesAvailable")
                 let bufferSize = 8192
                 let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
                 while (self.inputStream!.hasBytesAvailable) {
                     let n = self.inputStream!.read(buffer, maxLength: bufferSize)
-//                    NSLog("L2CAP read \(n)")
                     if n == 0 {
                         break
                     }
@@ -386,12 +404,10 @@ class L2CapStreamDelegate: NSObject, StreamDelegate {
                 }
                 buffer.deallocate()
             case .hasSpaceAvailable:
-//                NSLog("NSStreamEventHasSpaceAvailable")
                 self.streamHasSpaceAvailable()
             case .errorOccurred:
                 NSLog("NSStreamEventErrorOccurred")
             case .endEncountered:
-                NSLog("NSStreamEventEndEncountered")
                 self.streamEndEncountered()
         default:
             NSLog("unknown stream event")
