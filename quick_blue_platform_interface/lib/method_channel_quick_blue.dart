@@ -172,6 +172,12 @@ class MethodChannelQuickBlue extends QuickBluePlatform {
       'psm': psm,
     });
 
+    // Wait for the open status.
+    await _l2CapEventController.stream
+        .where((event) => event.deviceId == deviceId)
+        .firstWhere((event) => event is BleL2CapSocketEventOpened)
+        .timeout(const Duration(seconds: 5));
+
     return BleL2capSocket(
       sink: _L2capSink(
         channel: _method,
