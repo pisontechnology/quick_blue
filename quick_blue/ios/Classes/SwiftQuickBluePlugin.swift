@@ -39,9 +39,9 @@ extension CBPeripheral {
 
 public class QuickBlueMacosPlugin: NSObject, FlutterPlugin {
     public static func register(with registrar: FlutterPluginRegistrar) {
-        let method = FlutterMethodChannel(name: "quick_blue/method", binaryMessenger: registrar.messenger)
-        let eventScanResult = FlutterEventChannel(name: "quick_blue/event.scanResult", binaryMessenger: registrar.messenger)
-        let messageConnector = FlutterBasicMessageChannel(name: "quick_blue/message.connector", binaryMessenger: registrar.messenger)
+        let method = FlutterMethodChannel(name: "quick_blue/method", binaryMessenger: registrar.messenger())
+        let eventScanResult = FlutterEventChannel(name: "quick_blue/event.scanResult", binaryMessenger: registrar.messenger())
+        let messageConnector = FlutterBasicMessageChannel(name: "quick_blue/message.connector", binaryMessenger: registrar.messenger())
         
         let instance = QuickBlueMacosPlugin()
         registrar.addMethodCallDelegate(instance, channel: method)
