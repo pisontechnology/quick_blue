@@ -37,13 +37,13 @@ extension CBPeripheral {
     }
 }
 
-public class QuickBlueMacosPlugin: NSObject, FlutterPlugin {
+public class SwiftQuickBluePlugin: NSObject, FlutterPlugin {
     public static func register(with registrar: FlutterPluginRegistrar) {
         let method = FlutterMethodChannel(name: "quick_blue/method", binaryMessenger: registrar.messenger())
         let eventScanResult = FlutterEventChannel(name: "quick_blue/event.scanResult", binaryMessenger: registrar.messenger())
         let messageConnector = FlutterBasicMessageChannel(name: "quick_blue/message.connector", binaryMessenger: registrar.messenger())
         
-        let instance = QuickBlueMacosPlugin()
+        let instance = SwiftQuickBluePlugin()
         registrar.addMethodCallDelegate(instance, channel: method)
         eventScanResult.setStreamHandler(instance)
         instance.messageConnector = messageConnector
@@ -189,7 +189,7 @@ public class QuickBlueMacosPlugin: NSObject, FlutterPlugin {
     }
 }
 
-extension QuickBlueMacosPlugin: CBCentralManagerDelegate {
+extension SwiftQuickBluePlugin: CBCentralManagerDelegate {
     public func centralManagerDidUpdateState(_ central: CBCentralManager) {
     }
     
@@ -223,7 +223,7 @@ extension QuickBlueMacosPlugin: CBCentralManagerDelegate {
     }
 }
 
-extension QuickBlueMacosPlugin: FlutterStreamHandler {
+extension SwiftQuickBluePlugin: FlutterStreamHandler {
     open func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
         guard let args = arguments as? Dictionary<String, Any>, let name = args["name"] as? String else {
             return nil
@@ -245,7 +245,7 @@ extension QuickBlueMacosPlugin: FlutterStreamHandler {
     }
 }
 
-extension QuickBlueMacosPlugin: CBPeripheralDelegate {
+extension SwiftQuickBluePlugin: CBPeripheralDelegate {
     public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         for service in peripheral.services! {
             peripheral.discoverCharacteristics(nil, for: service)
