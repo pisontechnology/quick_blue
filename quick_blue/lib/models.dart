@@ -8,6 +8,7 @@ class BlueScanResult {
   Uint8List? _manufacturerDataHead;
   Uint8List? _manufacturerData;
   int rssi;
+  DateTime advertisedDateTime;
 
   Uint8List get manufacturerDataHead => _manufacturerDataHead ?? _empty;
 
@@ -18,7 +19,8 @@ class BlueScanResult {
         deviceId = map['deviceId'],
         _manufacturerDataHead = map['manufacturerDataHead'],
         _manufacturerData = map['manufacturerData'],
-        rssi = map['rssi'];
+        rssi = map['rssi'],
+        advertisedDateTime = DateTime.now();
 
   Map toMap() => {
         'name': name,
