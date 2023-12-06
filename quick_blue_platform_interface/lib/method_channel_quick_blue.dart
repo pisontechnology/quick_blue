@@ -106,6 +106,11 @@ class MethodChannelQuickBlue extends QuickBluePlatform {
         _ => throw 'Unknown L2Cap event $l2CapStatus',
       };
 
+      // Intercept errors specifically to submit, if encountered.
+      if (event is BleL2CapSocketEventError) {
+        _l2CapEventController.addError(event);
+        return;
+      }
       _l2CapEventController.add(event);
     }
   }
