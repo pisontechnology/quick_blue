@@ -96,11 +96,13 @@ class MethodChannelQuickBlue extends QuickBluePlatform {
       final String deviceId = message['deviceId'];
       final String l2CapStatus = message['l2capStatus'];
       final Uint8List? data = message['data'];
+      final String? error = message['error'];
 
       final event = switch (l2CapStatus) {
         'opened' => BleL2CapSocketEventOpened(deviceId: deviceId),
         'closed' => BleL2CapSocketEventClosed(deviceId: deviceId),
         'stream' => BleL2CapSocketEventData(deviceId: deviceId, data: data!),
+        'error' => BleL2CapSocketEventError(deviceId: deviceId, error: error),
         _ => throw 'Unknown L2Cap event $l2CapStatus',
       };
 

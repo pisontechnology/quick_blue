@@ -74,3 +74,12 @@ class BleL2CapSocketEventData extends BleL2CapSocketEvent {
 class BleL2CapSocketEventClosed extends BleL2CapSocketEvent {
   BleL2CapSocketEventClosed({required super.deviceId});
 }
+
+class BleL2CapSocketEventError extends BleL2CapSocketEvent {
+  BleL2CapSocketEventError({
+    required super.deviceId,
+    this.error,
+  });
+
+  final String? error;
+}

@@ -297,6 +297,12 @@ extension QuickBlueMacosPlugin: CBPeripheralDelegate {
                 "deviceId": peripheral.uuid.uuidString,
                 "l2capStatus": "closed",
             ])
+        }, errorCallback: { error in
+            self.messageConnector.sendMessage([
+                "deviceId": peripheral.uuid.uuidString,
+                "l2capStatus": "error",
+                "error": error?.localizedDescription
+            ])
         })
         streamDelegates[peripheral.uuid.uuidString] = streamDelegate
     }
@@ -310,15 +316,17 @@ class L2CapStreamDelegate: NSObject, StreamDelegate {
     var openedCallback: () -> ()?
     var streamCallback: (Data) -> ()?
     var closedCallback: () -> ()?
+    var errorCallback: (Error?) -> ()?
     
     var streamOpenCount = 0
     var dataToSend = Data()
     
-    init(channel: CBL2CAPChannel, openedCallback: @escaping () -> (), streamCallback: @escaping (Data) -> (), closedCallback: @escaping () -> ()) {
+    init(channel: CBL2CAPChannel, openedCallback: @escaping () -> (), streamCallback: @escaping (Data) -> (), closedCallback: @escaping () -> (), errorCallback: @escaping (Error?) -> ()) {
         self.channel = channel
         self.openedCallback = openedCallback
         self.streamCallback = streamCallback
         self.closedCallback = closedCallback
+        self.errorCallback = errorCallback
         
         super.init()
         
@@ -406,7 +414,7 @@ class L2CapStreamDelegate: NSObject, StreamDelegate {
         case .hasSpaceAvailable:
             self.streamHasSpaceAvailable()
         case .errorOccurred:
-            NSLog("NSStreamEventErrorOccurred")
+            self.errorCallback(aStream.streamError)
         case .endEncountered:
             self.streamEndEncountered()
         default:

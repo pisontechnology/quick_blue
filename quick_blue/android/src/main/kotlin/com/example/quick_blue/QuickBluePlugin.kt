@@ -178,6 +178,12 @@ class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHand
                   "l2capStatus" to "stream",
                   "data" to it
           ))
+        }, errorCallback = {
+          sendMessage(messageConnector, mapOf(
+                  "deviceId" to gatt.device.address,
+                  "l2capStatus" to "error",
+                  "error" to (it.message ?: ""),
+          ))
         })
 
         streamDelegates[gatt.device.address] = delegate
@@ -322,7 +328,8 @@ class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHand
 }
 
 class L2CapStreamDelegate(private val socket: BluetoothSocket, val openedCallback: () -> Unit,
-                          val closedCallback: () -> Unit, val streamCallback: (ByteArray) -> Unit) {
+                          val closedCallback: () -> Unit, val streamCallback: (ByteArray) -> Unit,
+                          val errorCallback: (Exception) -> Unit) {
   private val handlerThread = HandlerThread("L2CapThread")
   private val handler: Handler
 
@@ -340,8 +347,7 @@ class L2CapStreamDelegate(private val socket: BluetoothSocket, val openedCallbac
       try {
         socket.connect()
       } catch (e: Exception) {
-        println("Failed to connect: $e")
-        // TODO: should notify errors back to Flutter
+        errorCallback(e)
         handlerThread.quit()
         handlerReadThread.quit()
         return@post
@@ -353,7 +359,11 @@ class L2CapStreamDelegate(private val socket: BluetoothSocket, val openedCallbac
 
   fun write(data: ByteArray) {
     handler.post {
-      socket.outputStream.write(data)
+      try {
+        socket.outputStream.write(data)
+      } catch (e: Exception) {
+        errorCallback(e)
+      }
     }
   }
 
@@ -367,13 +377,17 @@ class L2CapStreamDelegate(private val socket: BluetoothSocket, val openedCallbac
 
   private fun read() {
     handlerRead.post {
-      val data = ByteArray(8192)
+      try {
+        val data = ByteArray(8192)
 
-      while (socket.isConnected) {
-        val bytesRead = socket.inputStream.read(data)
-        if (bytesRead != -1) {
-          streamCallback(data.copyOfRange(0, bytesRead))
+        while (socket.isConnected) {
+          val bytesRead = socket.inputStream.read(data)
+          if (bytesRead != -1) {
+            streamCallback(data.copyOfRange(0, bytesRead))
+          }
         }
+      } catch (e: Exception) {
+        errorCallback(e)
       }
     }
   }
