@@ -3,12 +3,11 @@ package com.example.quick_blue
 import android.annotation.SuppressLint
 import android.bluetooth.*
 import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
 import android.content.Context
-import android.os.Build
-import android.os.Handler
-import android.os.HandlerThread
-import android.os.Looper
+import android.os.*
 import android.util.Log
 import androidx.annotation.NonNull
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -70,7 +69,13 @@ class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHand
         result.success(bluetoothManager.adapter.isEnabled)
       }
       "startScan" -> {
-        bluetoothManager.adapter.bluetoothLeScanner?.startScan(scanCallback)
+        val settings = ScanSettings.Builder()
+          .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
+          .setMatchMode(ScanSettings.MATCH_MODE_STICKY)
+          .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+          .setReportDelay(0L)
+          .build()
+        bluetoothManager.adapter.bluetoothLeScanner?.startScan(listOf(), settings, scanCallback)
         result.success(null)
       }
       "stopScan" -> {
@@ -223,6 +228,7 @@ class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHand
 
   private val scanCallback = object : ScanCallback() {
     override fun onScanFailed(errorCode: Int) {
+      Log.d(TAG, "onScanFailed: $errorCode")
     }
 
     override fun onScanResult(callbackType: Int, result: ScanResult) {
@@ -268,8 +274,7 @@ class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHand
         BluetoothGatt.STATE_DISCONNECTING -> "disconnecting"
         else -> "unknown"
       }
-
-      // Clear out the connection if the device disconnected, or something bad happened.
+      // Clear out the connection if something bad happened.
       if (newState == BluetoothGatt.STATE_DISCONNECTED || status != BluetoothGatt.GATT_SUCCESS) {
         cleanConnection(gatt)
       }
@@ -279,6 +284,11 @@ class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHand
         "ConnectionState" to connectionState,
         "status" to gattStatus
       ))
+
+      // If we've disconnected, ensure that we also close out the gatt.
+      if (newState == BluetoothGatt.STATE_DISCONNECTED) {
+        gatt.close()
+      }
     }
 
     override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
