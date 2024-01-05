@@ -33,7 +33,9 @@ class QuickBlueLinux extends QuickBluePlatform {
   }
 
   @override
-  Future<void> startScan() async {
+  Future<void> startScan({
+    ScanFilter scanFilter = const ScanFilter(),
+  }) async {
     await _ensureInitialized();
 
     _activeAdapter!.startDiscovery();

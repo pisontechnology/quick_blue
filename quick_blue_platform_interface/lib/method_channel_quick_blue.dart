@@ -28,8 +28,12 @@ class MethodChannelQuickBlue extends QuickBluePlatform {
   }
 
   @override
-  Future<void> startScan() {
-    return _method.invokeMethod('startScan');
+  Future<void> startScan({
+    ScanFilter scanFilter = const ScanFilter(),
+  }) {
+    return _method.invokeMethod('startScan', {
+      'serviceUuids': scanFilter.serviceUuids,
+    });
   }
 
   @override

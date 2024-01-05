@@ -1,6 +1,14 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+class ScanFilter {
+  const ScanFilter({
+    this.serviceUuids = const [],
+  });
+
+  final List<String> serviceUuids;
+}
+
 class BlueConnectionState {
   static const disconnected = BlueConnectionState._('disconnected');
   static const connected = BlueConnectionState._('connected');

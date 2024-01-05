@@ -45,9 +45,12 @@ class QuickBlue {
   static Future<bool> isBluetoothAvailable() =>
       _platform.isBluetoothAvailable();
 
-  static void startScan() => _platform.startScan();
+  static Future<void> startScan({
+    ScanFilter scanFilter = const ScanFilter(),
+  }) =>
+      _platform.startScan(scanFilter: scanFilter);
 
-  static void stopScan() => _platform.stopScan();
+  static Future<void> stopScan() => _platform.stopScan();
 
   static Stream<BlueScanResult> get scanResultStream {
     return _platform.scanResultStream

@@ -68,7 +68,10 @@ public class SwiftQuickBluePlugin: NSObject, FlutterPlugin {
         case "isBluetoothAvailable":
             result(manager.state == .poweredOn)
         case "startScan":
-            manager.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey : true])
+            let arguments = call.arguments as! Dictionary<String, Any>
+            let filterServiceUuids = arguments["serviceUuids"] as! Array<String>
+            let withServices = filterServiceUuids.map { uuid in CBUUID(string: uuid) }
+            manager.scanForPeripherals(withServices: withServices, options: [CBCentralManagerScanOptionAllowDuplicatesKey : true])
             result(nil)
         case "stopScan":
             manager.stopScan()
