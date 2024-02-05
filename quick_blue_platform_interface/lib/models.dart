@@ -55,7 +55,7 @@ class BleL2capSocket {
   });
 
   final EventSink<Uint8List> sink;
-  final Stream<Uint8List> stream;
+  final Stream<BleL2CapSocketEvent> stream;
 }
 
 sealed class BleL2CapSocketEvent {
