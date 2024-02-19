@@ -22,7 +22,7 @@ class BlueScanResult {
         _manufacturerData = map['manufacturerData'],
         rssi = map['rssi'],
         advertisedDateTime = DateTime.now(),
-        serviceUuids = map['serviceUuids'] ?? <String>[];
+        serviceUuids = map['serviceUuids']?.cast<String>() ?? <String>[];
 
   Map toMap() => {
         'name': name,
