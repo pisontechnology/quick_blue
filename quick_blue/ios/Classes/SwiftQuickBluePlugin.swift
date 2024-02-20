@@ -200,11 +200,13 @@ extension SwiftQuickBluePlugin: CBCentralManagerDelegate {
         discoveredPeripherals[peripheral.uuid.uuidString] = peripheral
         
         let manufacturerData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data
+        let serviceUuids = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []
         scanResultSink?([
             "name": peripheral.name ?? "",
             "deviceId": peripheral.uuid.uuidString,
             "manufacturerData": FlutterStandardTypedData(bytes: manufacturerData ?? Data()),
             "rssi": RSSI,
+            "serviceUuids": serviceUuids.map { $0.uuidString }
         ])
     }
     
