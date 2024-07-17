@@ -77,9 +77,9 @@ class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHand
           val builder = ScanFilter.Builder()
             .setServiceUuid(ParcelUuid.fromString(it))
           if (filterManufacturerData != null) {
-            val manufacturerId = filterManufacturerData.keys.first()
-            val manufacturerData = filterManufacturerData[id]
-            builder.setManufacturerData(manufacturerId, manufacturerData)
+            val id = filterManufacturerData.keys.first()
+            val data = filterManufacturerData[id]
+            builder.setManufacturerData(id, data)
           }
           builder.build()
         }
