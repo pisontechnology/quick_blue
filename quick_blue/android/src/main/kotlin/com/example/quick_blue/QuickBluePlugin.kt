@@ -70,7 +70,6 @@ class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHand
       }
       "startScan" -> {
         val filterServiceUuids = call.argument<List<String>>("serviceUuids")
-        val filterServiceUuids = call.argument<List<String>>("serviceUuids")
         val filterManufacturerData = call.argument<Map<Int, ByteArray>>("manufacturerData")
 
         val filters = filterServiceUuids?.map {
