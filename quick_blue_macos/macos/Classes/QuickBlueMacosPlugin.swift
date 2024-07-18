@@ -6,6 +6,8 @@ let GATT_HEADER_LENGTH = 3
 
 let GSS_SUFFIX = "0000-1000-8000-00805f9b34fb"
 
+private var targetManufacturerData: Data?
+
 extension CBUUID {
     public var uuidStr: String {
         get {
@@ -71,6 +73,18 @@ public class QuickBlueMacosPlugin: NSObject, FlutterPlugin {
             let arguments = call.arguments as! Dictionary<String, Any>
             let filterServiceUuids = arguments["serviceUuids"] as! Array<String>
             let withServices = filterServiceUuids.map { uuid in CBUUID(string: uuid) }
+            // Handle manufacturer data if provided
+            if let manufacturerDataDict = arguments["manufacturerData"] as? [Int: FlutterStandardTypedData] {
+                if let manufacturerId = manufacturerDataDict.keys.first,
+                   let manufacturerData = manufacturerDataDict[manufacturerId] {
+                    
+                    var mByteArray = withUnsafeBytes(of: UInt16(manufacturerId).littleEndian) { Array($0) }
+                    mByteArray.append(contentsOf: manufacturerData.data)
+                    
+                    let givenManufacturerData = Data(_: mByteArray)
+                    targetManufacturerData = givenManufacturerData
+                }
+            }
             manager.scanForPeripherals(withServices: withServices, options: [CBCentralManagerScanOptionAllowDuplicatesKey : true])
             result(nil)
         case "stopScan":
@@ -201,13 +215,26 @@ extension QuickBlueMacosPlugin: CBCentralManagerDelegate {
         
         let manufacturerData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data
         let serviceUuids = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []
-        scanResultSink?([
-            "name": peripheral.name ?? "",
-            "deviceId": peripheral.uuid.uuidString,
-            "manufacturerData": FlutterStandardTypedData(bytes: manufacturerData ?? Data()),
-            "rssi": RSSI,
-            "serviceUuids": serviceUuids.map { $0.uuidString }
-        ])
+        
+        if (targetManufacturerData != nil) {
+            if (targetManufacturerData == manufacturerData) {
+                scanResultSink?([
+                    "name": peripheral.name ?? "",
+                    "deviceId": peripheral.uuid.uuidString,
+                    "manufacturerData": FlutterStandardTypedData(bytes: manufacturerData ?? Data()),
+                    "rssi": RSSI,
+                    "serviceUuids": serviceUuids.map { $0.uuidString }
+                ])
+            }
+        } else {
+            scanResultSink?([
+                "name": peripheral.name ?? "",
+                "deviceId": peripheral.uuid.uuidString,
+                "manufacturerData": FlutterStandardTypedData(bytes: manufacturerData ?? Data()),
+                "rssi": RSSI,
+                "serviceUuids": serviceUuids.map { $0.uuidString }
+            ])
+        }
     }
     
     public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
