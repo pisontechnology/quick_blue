@@ -245,7 +245,12 @@ extension SwiftQuickBluePlugin: CBCentralManagerDelegate {
     }
     
     public func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
-        
+        if let error = error {
+            central.cancelPeripheralConnection(peripheral)
+            if let streamDelegate = streamDelegates[peripheral.uuid.uuidString] {
+                streamDelegate.close()
+            }
+        }
         messageConnector.sendMessage([
             "deviceId": peripheral.uuid.uuidString,
             "ConnectionState": "disconnected",
