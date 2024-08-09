@@ -23,7 +23,7 @@ extension CBPeripheral {
             value(forKey: "identifier") as! NSUUID as UUID
         }
     }
-    
+
     public func getCharacteristic(_ characteristic: String, of service: String) -> CBCharacteristic {
         let s = self.services?.first {
             $0.uuid.uuidStr == service || "0000\($0.uuid.uuidStr)-\(GSS_SUFFIX)" == service
@@ -63,6 +63,28 @@ public class SwiftQuickBluePlugin: NSObject, FlutterPlugin {
         manager = CBCentralManager(delegate: self, queue: nil)
         discoveredPeripherals = Dictionary()
         streamDelegates = Dictionary()
+    }
+
+    public func detachFromEngine(for registrar: FlutterPluginRegistrar) {
+        // Stop scanning
+        manager.stopScan()
+
+        // Disconnect all active devices
+        for (_, peripheral) in discoveredPeripherals {
+            cleanConnection(peripheral)
+        }
+
+        // Clean up resources
+        scanResultSink = nil
+        messageConnector.setMessageHandler(nil)
+    }
+
+    private func cleanConnection(_ peripheral: CBPeripheral) {
+        if let delegate = streamDelegates[peripheral.uuid.uuidString] {
+            delegate.close()
+            streamDelegates.removeValue(forKey: peripheral.uuid.uuidString)
+        }
+        manager.cancelPeripheralConnection(peripheral)
     }
     
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
