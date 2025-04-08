@@ -1,4 +1,4 @@
-# quick_blue_macos
+# quick_blue_darwin
 
 A new flutter plugin project.
 

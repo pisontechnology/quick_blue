@@ -1,6 +1,10 @@
-import Cocoa
 import CoreBluetooth
+
+#if os(iOS)
+import Flutter
+#elseif os(OSX)
 import FlutterMacOS
+#endif
 
 let GATT_HEADER_LENGTH = 3
 
@@ -23,7 +27,7 @@ extension CBPeripheral {
             value(forKey: "identifier") as! NSUUID as UUID
         }
     }
-    
+
     public func getCharacteristic(_ characteristic: String, of service: String) -> CBCharacteristic? {
         let s = self.services?.first {
             $0.uuid.uuidStr == service || "0000\($0.uuid.uuidStr)-\(GSS_SUFFIX)" == service
@@ -39,13 +43,20 @@ extension CBPeripheral {
     }
 }
 
-public class QuickBlueMacosPlugin: NSObject, FlutterPlugin {
+public class QuickBlueDarwinPlugin: NSObject, FlutterPlugin {
     public static func register(with registrar: FlutterPluginRegistrar) {
-        let method = FlutterMethodChannel(name: "quick_blue/method", binaryMessenger: registrar.messenger)
-        let eventScanResult = FlutterEventChannel(name: "quick_blue/event.scanResult", binaryMessenger: registrar.messenger)
-        let messageConnector = FlutterBasicMessageChannel(name: "quick_blue/message.connector", binaryMessenger: registrar.messenger)
+        #if os(iOS)
+        let messenger = registrar.messenger()
+        #elseif os(OSX)
+        let messenger = registrar.messenger
+        #endif
         
-        let instance = QuickBlueMacosPlugin()
+        
+        let method = FlutterMethodChannel(name: "quick_blue/method", binaryMessenger: messenger)
+        let eventScanResult = FlutterEventChannel(name: "quick_blue/event.scanResult", binaryMessenger: messenger)
+        let messageConnector = FlutterBasicMessageChannel(name: "quick_blue/message.connector", binaryMessenger: messenger)
+        
+        let instance = QuickBlueDarwinPlugin()
         registrar.addMethodCallDelegate(instance, channel: method)
         eventScanResult.setStreamHandler(instance)
         instance.messageConnector = messageConnector
@@ -63,6 +74,28 @@ public class QuickBlueMacosPlugin: NSObject, FlutterPlugin {
         manager = CBCentralManager(delegate: self, queue: nil)
         discoveredPeripherals = Dictionary()
         streamDelegates = Dictionary()
+    }
+
+    public func detachFromEngine(for registrar: FlutterPluginRegistrar) {
+        // Stop scanning
+        manager.stopScan()
+
+        // Disconnect all active devices
+        for (_, peripheral) in discoveredPeripherals {
+            cleanConnection(peripheral)
+        }
+
+        // Clean up resources
+        scanResultSink = nil
+        messageConnector.setMessageHandler(nil)
+    }
+
+    private func cleanConnection(_ peripheral: CBPeripheral) {
+        if let delegate = streamDelegates[peripheral.uuid.uuidString] {
+            delegate.close()
+            streamDelegates.removeValue(forKey: peripheral.uuid.uuidString)
+        }
+        manager.cancelPeripheralConnection(peripheral)
     }
     
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -107,12 +140,7 @@ public class QuickBlueMacosPlugin: NSObject, FlutterPlugin {
                 result(FlutterError(code: "IllegalArgument", message: "Unknown deviceId:\(deviceId)", details: nil))
                 return
             }
-            if (peripheral.state != .disconnected) {
-                manager.cancelPeripheralConnection(peripheral)
-            }
-            if let streamDelegate = streamDelegates[deviceId] {
-                streamDelegate.close()
-            }
+            cleanConnection(peripheral)
             result(nil)
         case "discoverServices":
             let arguments = call.arguments as! Dictionary<String, Any>
@@ -218,7 +246,7 @@ public class QuickBlueMacosPlugin: NSObject, FlutterPlugin {
     }
 }
 
-extension QuickBlueMacosPlugin: CBCentralManagerDelegate {
+extension QuickBlueDarwinPlugin: CBCentralManagerDelegate {
     public func centralManagerDidUpdateState(_ central: CBCentralManager) {
     }
     
@@ -227,7 +255,6 @@ extension QuickBlueMacosPlugin: CBCentralManagerDelegate {
         
         let manufacturerData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data
         let serviceUuids = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []
-        
         if (targetManufacturerData != nil) {
             if (targetManufacturerData == manufacturerData) {
                 scanResultSink?([
@@ -272,7 +299,7 @@ extension QuickBlueMacosPlugin: CBCentralManagerDelegate {
     }
 }
 
-extension QuickBlueMacosPlugin: FlutterStreamHandler {
+extension QuickBlueDarwinPlugin: FlutterStreamHandler {
     open func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
         guard let args = arguments as? Dictionary<String, Any>, let name = args["name"] as? String else {
             return nil
@@ -294,7 +321,7 @@ extension QuickBlueMacosPlugin: FlutterStreamHandler {
     }
 }
 
-extension QuickBlueMacosPlugin: CBPeripheralDelegate {
+extension QuickBlueDarwinPlugin: CBPeripheralDelegate {
     public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         for service in peripheral.services! {
             peripheral.discoverCharacteristics(nil, for: service)

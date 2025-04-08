@@ -43,8 +43,8 @@ dev_dependencies:
   flutter_lints: ^2.0.0
 
 dependency_overrides:
-  quick_blue_macos:
-    path: ../../quick_blue_macos
+  quick_blue_darwin:
+    path: ../../quick_blue_darwin
   quick_blue_linux:
     path: ../../quick_blue_linux
   quick_blue_platform_interface:
