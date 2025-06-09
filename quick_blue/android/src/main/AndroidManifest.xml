@@ -1,5 +1,4 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-  package="com.example.quick_blue">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
   <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
       android:usesPermissionFlags="neverForLocation" />
   <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
@@ -14,4 +13,9 @@
   <!-- legacy for Android 9 or lower -->
   <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"
       android:maxSdkVersion="28" />
+
+  <uses-feature android:name="android.software.companion_device_setup"/>
+  <uses-permission android:name="android.permission.REQUEST_COMPANION_RUN_IN_BACKGROUND" />
+  <uses-permission android:name="android.permission.REQUEST_COMPANION_USE_DATA_IN_BACKGROUND" />
+
 </manifest>

@@ -45,22 +45,31 @@ class QuickBlue {
   static Future<bool> isBluetoothAvailable() =>
       _platform.isBluetoothAvailable();
 
-  static Future<void> startScan({
-    ScanFilter scanFilter = const ScanFilter(),
-  }) =>
+  static Future<void> startScan({ScanFilter scanFilter = const ScanFilter()}) =>
       _platform.startScan(scanFilter: scanFilter);
 
   static Future<void> stopScan() => _platform.stopScan();
 
   static Stream<BlueScanResult> get scanResultStream {
-    return _platform.scanResultStream
-        .map((item) => BlueScanResult.fromMap(item));
+    return _platform.scanResultStream.map(
+      (item) => BlueScanResult.fromMap(item),
+    );
   }
 
   static Future<void> connect(String deviceId) => _platform.connect(deviceId);
 
   static Future<void> disconnect(String deviceId) =>
       _platform.disconnect(deviceId);
+
+  static Future<String?> connectCompanion({
+    String? deviceId,
+    ScanFilter? scanFilter,
+  }) => _platform.connectCompanion(deviceId: deviceId, scanFilter: scanFilter);
+  static Future<void> disconnectCompanion(String deviceId) =>
+      _platform.disconnectCompanion(deviceId);
+
+  static Future<List<Map>?> getCompanionAssociations() =>
+      _platform.getCompanionAssociations();
 
   static void setConnectionHandler(OnConnectionChanged? onConnectionChanged) {
     _platform.onConnectionChanged = onConnectionChanged;
@@ -73,10 +82,18 @@ class QuickBlue {
     _platform.onServiceDiscovered = onServiceDiscovered;
   }
 
-  static Future<void> setNotifiable(String deviceId, String service,
-      String characteristic, BleInputProperty bleInputProperty) {
+  static Future<void> setNotifiable(
+    String deviceId,
+    String service,
+    String characteristic,
+    BleInputProperty bleInputProperty,
+  ) {
     return _platform.setNotifiable(
-        deviceId, service, characteristic, bleInputProperty);
+      deviceId,
+      service,
+      characteristic,
+      bleInputProperty,
+    );
   }
 
   static void setValueHandler(OnValueChanged? onValueChanged) {

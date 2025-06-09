@@ -9,23 +9,18 @@ import 'models.dart';
 export 'method_channel_quick_blue.dart';
 export 'models.dart';
 
-typedef OnConnectionChanged = void Function(
-  String deviceId,
-  BlueConnectionState state,
-  BleStatus status,
-);
+typedef OnConnectionChanged =
+    void Function(String deviceId, BlueConnectionState state, BleStatus status);
 
-typedef OnServiceDiscovered = void Function(
-  String deviceId,
-  String serviceId,
-  List<String> characteristicIds,
-);
+typedef OnServiceDiscovered =
+    void Function(
+      String deviceId,
+      String serviceId,
+      List<String> characteristicIds,
+    );
 
-typedef OnValueChanged = void Function(
-  String deviceId,
-  String characteristicId,
-  Uint8List value,
-);
+typedef OnValueChanged =
+    void Function(String deviceId, String characteristicId, Uint8List value);
 
 abstract class QuickBluePlatform extends PlatformInterface {
   QuickBluePlatform() : super(token: _token);
@@ -43,9 +38,7 @@ abstract class QuickBluePlatform extends PlatformInterface {
 
   Future<bool> isBluetoothAvailable();
 
-  Future<void> startScan({
-    ScanFilter scanFilter = const ScanFilter(),
-  });
+  Future<void> startScan({ScanFilter scanFilter = const ScanFilter()});
 
   Future<void> stopScan();
 
@@ -54,6 +47,12 @@ abstract class QuickBluePlatform extends PlatformInterface {
   Future<void> connect(String deviceId);
 
   Future<void> disconnect(String deviceId);
+
+  Future<String?> connectCompanion({String? deviceId, ScanFilter? scanFilter});
+
+  Future<void> disconnectCompanion(String deviceId);
+
+  Future<List<Map>?> getCompanionAssociations();
 
   OnConnectionChanged? onConnectionChanged;
 
