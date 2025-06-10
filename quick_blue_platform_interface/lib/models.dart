@@ -2,10 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 class ScanFilter {
-  const ScanFilter({
-    this.serviceUuids = const [],
-    this.manufacturerData,
-  });
+  const ScanFilter({this.serviceUuids = const [], this.manufacturerData});
 
   final List<String> serviceUuids;
   final Map<int, Uint8List>? manufacturerData;
@@ -51,19 +48,14 @@ class BleOutputProperty {
 }
 
 class BleL2capSocket {
-  BleL2capSocket({
-    required this.sink,
-    required this.stream,
-  });
+  BleL2capSocket({required this.sink, required this.stream});
 
   final EventSink<Uint8List> sink;
   final Stream<BleL2CapSocketEvent> stream;
 }
 
 sealed class BleL2CapSocketEvent {
-  BleL2CapSocketEvent({
-    required this.deviceId,
-  });
+  BleL2CapSocketEvent({required this.deviceId});
 
   final String deviceId;
 }
@@ -73,10 +65,7 @@ class BleL2CapSocketEventOpened extends BleL2CapSocketEvent {
 }
 
 class BleL2CapSocketEventData extends BleL2CapSocketEvent {
-  BleL2CapSocketEventData({
-    required super.deviceId,
-    required this.data,
-  });
+  BleL2CapSocketEventData({required super.deviceId, required this.data});
 
   final Uint8List data;
 }
@@ -86,10 +75,28 @@ class BleL2CapSocketEventClosed extends BleL2CapSocketEvent {
 }
 
 class BleL2CapSocketEventError extends BleL2CapSocketEvent {
-  BleL2CapSocketEventError({
-    required super.deviceId,
-    this.error,
-  });
+  BleL2CapSocketEventError({required super.deviceId, this.error});
 
   final String? error;
+}
+
+class CompanionDevice {
+  CompanionDevice({
+    required this.id,
+    required this.name,
+    required this.associationId,
+  });
+
+  CompanionDevice.fromMap(Map map)
+    : id = map['id'] as String,
+      name = map['name'] as String,
+      associationId = map['associationId'] as int;
+
+  final String id;
+  final String name;
+  final int associationId;
+
+  @override
+  String toString() =>
+      'CompanionDevice(id: $id, name: $name, associationId: $associationId)';
 }

@@ -48,11 +48,14 @@ abstract class QuickBluePlatform extends PlatformInterface {
 
   Future<void> disconnect(String deviceId);
 
-  Future<String?> connectCompanion({String? deviceId, ScanFilter? scanFilter});
+  Future<CompanionDevice?> companionAssociate({
+    String? deviceId,
+    ScanFilter? scanFilter,
+  });
 
-  Future<void> disconnectCompanion(String deviceId);
+  Future<void> companionDisassociate(int associationId);
 
-  Future<List<Map>?> getCompanionAssociations();
+  Future<List<CompanionDevice>?> getCompanionAssociations();
 
   OnConnectionChanged? onConnectionChanged;
 

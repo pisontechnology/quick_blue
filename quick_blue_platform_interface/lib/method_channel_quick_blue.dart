@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/services.dart';
 
@@ -58,23 +59,49 @@ class MethodChannelQuickBlue extends QuickBluePlatform {
   }
 
   @override
-  Future<String?> connectCompanion({String? deviceId, ScanFilter? scanFilter}) {
-    return _method.invokeMethod('companionAssociate', {
+  Future<CompanionDevice?> companionAssociate({
+    String? deviceId,
+    ScanFilter? scanFilter,
+  }) async {
+    if (!Platform.isAndroid) {
+      throw UnsupportedError(
+        'Companion device association is only supported on Android.',
+      );
+    }
+    final data = await _method.invokeMethod('companionAssociate', {
       if (scanFilter != null) 'serviceUuids': scanFilter.serviceUuids,
       if (deviceId != null) 'deviceId': deviceId,
     });
+    if (data == null) {
+      return null;
+    }
+    return CompanionDevice.fromMap(data as Map);
   }
 
   @override
-  Future<void> disconnectCompanion(String deviceId) {
+  Future<void> companionDisassociate(int associationId) {
+    if (!Platform.isAndroid) {
+      throw UnsupportedError(
+        'Companion device association is only supported on Android.',
+      );
+    }
     return _method.invokeMethod('companionDisassociate', {
-      'deviceId': deviceId,
+      'associationId': associationId,
     });
   }
 
   @override
-  Future<List<Map>?> getCompanionAssociations() {
-    return _method.invokeListMethod('companionListAssociations');
+  Future<List<CompanionDevice>?> getCompanionAssociations() async {
+    if (!Platform.isAndroid) {
+      throw UnsupportedError(
+        'Companion device association is only supported on Android.',
+      );
+    }
+    final data = await _method.invokeListMethod('companionListAssociations');
+    if (data == null) {
+      return null;
+    }
+    return data.map((item) => CompanionDevice.fromMap(item as Map)).toList();
   }
 
   @override

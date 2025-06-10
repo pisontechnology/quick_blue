@@ -61,14 +61,16 @@ class QuickBlue {
   static Future<void> disconnect(String deviceId) =>
       _platform.disconnect(deviceId);
 
-  static Future<String?> connectCompanion({
+  static Future<CompanionDevice?> companionAssociate({
     String? deviceId,
     ScanFilter? scanFilter,
-  }) => _platform.connectCompanion(deviceId: deviceId, scanFilter: scanFilter);
-  static Future<void> disconnectCompanion(String deviceId) =>
-      _platform.disconnectCompanion(deviceId);
+  }) =>
+      _platform.companionAssociate(deviceId: deviceId, scanFilter: scanFilter);
 
-  static Future<List<Map>?> getCompanionAssociations() =>
+  static Future<void> companionDissassociate(int associationId) =>
+      _platform.companionDisassociate(associationId);
+
+  static Future<List<CompanionDevice>?> getCompanionAssociations() =>
       _platform.getCompanionAssociations();
 
   static void setConnectionHandler(OnConnectionChanged? onConnectionChanged) {

@@ -71,17 +71,11 @@ class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHand
   }
 
   override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
-    Log.d(TAG, "Request: $requestCode")
     when (requestCode) {
       SELECT_DEVICE_REQUEST_CODE -> when(resultCode) {
         Activity.RESULT_OK -> {
-          val deviceToPair: BluetoothDevice? =
-            data?.getParcelableExtra(CompanionDeviceManager.EXTRA_DEVICE)
-          deviceToPair?.let { device ->
-            Log.d(TAG, "hello")
-            device.createBond()
-            connectDevice(device)
-          }
+          // TODO(cg): unlikely we need to do anything here; handling the association is
+          //           managed within onAssociationCreated.
           return true
         }
       }
@@ -93,10 +87,12 @@ class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHand
     activity = binding.activity
   }
 
-  override fun onDetachedFromActivityForConfigChanges() {
+  override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
+    activity = binding.activity
   }
 
-  override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
+  override fun onDetachedFromActivityForConfigChanges() {
+    activity = null
   }
 
   override fun onDetachedFromActivity() {
@@ -107,7 +103,6 @@ class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHand
   private lateinit var mainThreadHandler: Handler
   private lateinit var bluetoothManager: BluetoothManager
   private lateinit var companionDeviceManager: CompanionDeviceManager
-  private lateinit var l2capHandler: Handler
 
   private var activity: Activity? = null
 
@@ -154,11 +149,9 @@ class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHand
       "companionAssociate" -> {
         val filterDeviceId = call.argument<String>("deviceId")
         val filterServiceUuids = call.argument<List<String>>("serviceUuids")
-        Log.d(TAG, "hello!")
-
 
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-          result.error("", "", null)
+          result.error("UnsupportedAndroidVersion", "Associating companion devices requires Android API 33 or higher", null)
           return
         }
 
@@ -168,7 +161,6 @@ class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHand
           }
 
           filterServiceUuids?.map { uuid ->
-            Log.d(TAG, "adding $uuid")
             it.addServiceUuid(ParcelUuid.fromString(uuid), null)
           }
           it.build()
@@ -181,41 +173,40 @@ class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHand
         companionDeviceManager.associate(pairingRequest,
           executor,
           object : CompanionDeviceManager.Callback() {
-            // Called when a device is found. Launch the IntentSender so the user
-            // can select the device they want to pair with.
             override fun onAssociationPending(intentSender: IntentSender) {
-              Log.d(TAG, "pending")
-              intentSender?.let {
-                startIntentSenderForResult(activity!!, it, SELECT_DEVICE_REQUEST_CODE, null, 0, 0, 0, null)
-              }
+                startIntentSenderForResult(activity!!,
+                    intentSender, SELECT_DEVICE_REQUEST_CODE, null, 0, 0, 0, null)
             }
 
             override fun onAssociationCreated(associationInfo: AssociationInfo) {
-              // AssociationInfo object is created and get association id and the
-              // macAddress.
               var associationId = associationInfo.id
               var macAddress = associationInfo.deviceMacAddress
+              var displayName = associationInfo.displayName
 
-              result.success(macAddress.toString())
+              result.success(mapOf(
+                "associationId" to associationId,
+                "id" to macAddress.toString(),
+                "name" to displayName
+              ))
             }
 
             override fun onFailure(errorMessage: CharSequence?) {
-              // Handle the failure.
-              Log.d(TAG, errorMessage.toString())
+              result.error("AssociationFailed", errorMessage.toString(), null)
             }
           }
         )
       }
       "companionDisassociate" -> {
-        val deviceId = call.argument<String>("deviceId")!!
-        companionDeviceManager.disassociate(deviceId)
+        val associationId = call.argument<Int>("associationId")!!
+        companionDeviceManager.disassociate(associationId)
         result.success(null)
       }
       "companionListAssociations" -> {
         val data = companionDeviceManager.myAssociations.map {
           mapOf(
-            "deviceId" to it.deviceMacAddress.toString(),
-            "deviceName" to it.displayName,
+            "associationId" to it.id,
+            "id" to it.deviceMacAddress.toString(),
+            "name" to it.displayName,
           )
         }
         result.success(data)

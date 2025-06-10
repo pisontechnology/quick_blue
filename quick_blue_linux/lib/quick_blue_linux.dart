@@ -121,20 +121,21 @@ class QuickBlueLinux extends QuickBluePlatform {
   }
 
   @override
-  Future<String?> connectCompanion({String? deviceId, ScanFilter? scanFilter}) {
-    // TODO: implement connectCompanion
-    throw UnimplementedError();
-  }
-
-  @override
-  Future<void> disconnectCompanion(String deviceId) {
-    // TODO: implement disconnectCompanion
-    throw UnimplementedError();
-  }
-
-  @override
-  Future<List<Map<String, dynamic>>?> getCompanionAssociations() {
+  Future<List<CompanionDevice>?> getCompanionAssociations() {
     // TODO: implement getCompanionAssociations
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<CompanionDevice?> companionAssociate(
+      {String? deviceId, ScanFilter? scanFilter}) {
+    // TODO: implement companionAssociate
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> companionDisassociate(int associationId) {
+    // TODO: implement companionDisassociate
     throw UnimplementedError();
   }
 }
