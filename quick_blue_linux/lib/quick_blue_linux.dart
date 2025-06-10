@@ -119,6 +119,25 @@ class QuickBlueLinux extends QuickBluePlatform {
     // TODO: implement openL2cap
     throw UnimplementedError();
   }
+
+  @override
+  Future<List<CompanionDevice>?> getCompanionAssociations() {
+    // TODO: implement getCompanionAssociations
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<CompanionDevice?> companionAssociate(
+      {String? deviceId, ScanFilter? scanFilter}) {
+    // TODO: implement companionAssociate
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> companionDisassociate(int associationId) {
+    // TODO: implement companionDisassociate
+    throw UnimplementedError();
+  }
 }
 
 extension BlueZDeviceExtension on BlueZDevice {

@@ -3,8 +3,8 @@ description: darwin implementation of the quick_blue plugin.
 version: 0.4.0-dev.0
 
 environment:
-  sdk: ">=2.13.0 <3.0.0"
-  flutter: ">=2.2.0"
+  sdk: ^3.7.0
+  flutter: 3.29.0
 
 dependencies:
   flutter:

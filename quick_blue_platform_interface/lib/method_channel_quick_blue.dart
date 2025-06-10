@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/services.dart';
 
@@ -28,9 +29,7 @@ class MethodChannelQuickBlue extends QuickBluePlatform {
   }
 
   @override
-  Future<void> startScan({
-    ScanFilter scanFilter = const ScanFilter(),
-  }) {
+  Future<void> startScan({ScanFilter scanFilter = const ScanFilter()}) {
     return _method.invokeMethod('startScan', {
       'serviceUuids': scanFilter.serviceUuids,
       'manufacturerData': scanFilter.manufacturerData,
@@ -42,31 +41,72 @@ class MethodChannelQuickBlue extends QuickBluePlatform {
     return _method.invokeMethod('stopScan');
   }
 
-  Stream<dynamic> _scanResultStream =
-      _event_scanResult.receiveBroadcastStream({'name': 'scanResult'});
+  Stream<dynamic> _scanResultStream = _event_scanResult.receiveBroadcastStream({
+    'name': 'scanResult',
+  });
 
   @override
   Stream<dynamic> get scanResultStream => _scanResultStream;
 
   @override
   Future<void> connect(String deviceId) {
-    return _method.invokeMethod('connect', {
-      'deviceId': deviceId,
-    });
+    return _method.invokeMethod('connect', {'deviceId': deviceId});
   }
 
   @override
   Future<void> disconnect(String deviceId) {
-    return _method.invokeMethod('disconnect', {
-      'deviceId': deviceId,
+    return _method.invokeMethod('disconnect', {'deviceId': deviceId});
+  }
+
+  @override
+  Future<CompanionDevice?> companionAssociate({
+    String? deviceId,
+    ScanFilter? scanFilter,
+  }) async {
+    if (!Platform.isAndroid) {
+      throw UnsupportedError(
+        'Companion device association is only supported on Android.',
+      );
+    }
+    final data = await _method.invokeMethod('companionAssociate', {
+      if (scanFilter != null) 'serviceUuids': scanFilter.serviceUuids,
+      if (deviceId != null) 'deviceId': deviceId,
+    });
+    if (data == null) {
+      return null;
+    }
+    return CompanionDevice.fromMap(data as Map);
+  }
+
+  @override
+  Future<void> companionDisassociate(int associationId) {
+    if (!Platform.isAndroid) {
+      throw UnsupportedError(
+        'Companion device association is only supported on Android.',
+      );
+    }
+    return _method.invokeMethod('companionDisassociate', {
+      'associationId': associationId,
     });
   }
 
   @override
+  Future<List<CompanionDevice>?> getCompanionAssociations() async {
+    if (!Platform.isAndroid) {
+      throw UnsupportedError(
+        'Companion device association is only supported on Android.',
+      );
+    }
+    final data = await _method.invokeListMethod('companionListAssociations');
+    if (data == null) {
+      return null;
+    }
+    return data.map((item) => CompanionDevice.fromMap(item as Map)).toList();
+  }
+
+  @override
   Future<void> discoverServices(String deviceId) {
-    return _method.invokeMethod('discoverServices', {
-      'deviceId': deviceId,
-    });
+    return _method.invokeMethod('discoverServices', {'deviceId': deviceId});
   }
 
   Future<void> _handleConnectorMessage(dynamic message) async {
@@ -180,10 +220,7 @@ class MethodChannelQuickBlue extends QuickBluePlatform {
 
   @override
   Future<BleL2capSocket> openL2cap(String deviceId, int psm) async {
-    await _method.invokeMethod('openL2cap', {
-      'deviceId': deviceId,
-      'psm': psm,
-    });
+    await _method.invokeMethod('openL2cap', {'deviceId': deviceId, 'psm': psm});
 
     // Wait for the open status.
     await _l2CapEventController.stream
@@ -192,31 +229,23 @@ class MethodChannelQuickBlue extends QuickBluePlatform {
         .timeout(const Duration(seconds: 5));
 
     return BleL2capSocket(
-      sink: _L2capSink(
-        channel: _method,
-        deviceId: deviceId,
+      sink: _L2capSink(channel: _method, deviceId: deviceId),
+      stream: _l2CapEventController.stream.where(
+        (event) => event.deviceId == deviceId,
       ),
-      stream: _l2CapEventController.stream
-          .where((event) => event.deviceId == deviceId),
     );
   }
 }
 
 class _L2capSink implements EventSink<Uint8List> {
-  _L2capSink({
-    required this.channel,
-    required this.deviceId,
-  });
+  _L2capSink({required this.channel, required this.deviceId});
 
   final MethodChannel channel;
   final String deviceId;
 
   @override
   void add(Uint8List event) {
-    channel.invokeMethod('_l2cap_write', {
-      'deviceId': deviceId,
-      'data': event,
-    });
+    channel.invokeMethod('_l2cap_write', {'deviceId': deviceId, 'data': event});
   }
 
   @override

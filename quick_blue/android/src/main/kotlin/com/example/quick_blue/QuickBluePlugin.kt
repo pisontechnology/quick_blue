@@ -1,28 +1,41 @@
 package com.example.quick_blue
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.bluetooth.*
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
+import android.companion.AssociationInfo
+import android.companion.AssociationRequest
+import android.companion.BluetoothDeviceFilter
+import android.companion.CompanionDeviceManager
 import android.content.Context
+import android.content.Intent
+import android.content.IntentSender
 import android.os.*
 import android.util.Log
 import androidx.annotation.NonNull
+import androidx.core.app.ActivityCompat.startIntentSenderForResult
 import io.flutter.embedding.engine.plugins.FlutterPlugin
+import io.flutter.embedding.engine.plugins.activity.ActivityAware
+import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.*
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.*
+import java.util.concurrent.Executor
 
 private const val TAG = "QuickBluePlugin"
+private const val SELECT_DEVICE_REQUEST_CODE = 10011
 
 /** QuickBluePlugin */
 @SuppressLint("MissingPermission")
-class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHandler {
+class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHandler, PluginRegistry.ActivityResultListener,
+  ActivityAware {
   /// The MethodChannel that will the communication between Flutter and native Android
   ///
   /// This local reference serves to register the plugin with the Flutter Engine and unregister it
@@ -42,6 +55,7 @@ class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHand
     context = flutterPluginBinding.applicationContext
     mainThreadHandler = Handler(Looper.getMainLooper())
     bluetoothManager = flutterPluginBinding.applicationContext.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+    companionDeviceManager = flutterPluginBinding.applicationContext.getSystemService(Context.COMPANION_DEVICE_SERVICE) as CompanionDeviceManager
   }
 
   override fun onDetachedFromEngine(@NonNull binding: FlutterPlugin.FlutterPluginBinding) {
@@ -56,11 +70,43 @@ class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHand
     method.setMethodCallHandler(null)
   }
 
+  override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
+    when (requestCode) {
+      SELECT_DEVICE_REQUEST_CODE -> when(resultCode) {
+        Activity.RESULT_OK -> {
+          // TODO(cg): unlikely we need to do anything here; handling the association is
+          //           managed within onAssociationCreated.
+          return true
+        }
+      }
+    }
+    return false
+  }
+
+  override fun onAttachedToActivity(binding: ActivityPluginBinding) {
+    activity = binding.activity
+  }
+
+  override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
+    activity = binding.activity
+  }
+
+  override fun onDetachedFromActivityForConfigChanges() {
+    activity = null
+  }
+
+  override fun onDetachedFromActivity() {
+    activity = null
+  }
+
   private lateinit var context: Context
   private lateinit var mainThreadHandler: Handler
   private lateinit var bluetoothManager: BluetoothManager
-  private lateinit var l2capHandler: Handler
+  private lateinit var companionDeviceManager: CompanionDeviceManager
 
+  private var activity: Activity? = null
+
+  private val executor: Executor =  Executor { it.run() }
   private val knownGatts = mutableListOf<BluetoothGatt>()
   private val streamDelegates = mutableMapOf<String, L2CapStreamDelegate>()
 
@@ -100,18 +146,78 @@ class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHand
         bluetoothManager.adapter.bluetoothLeScanner?.stopScan(scanCallback)
         result.success(null)
       }
+      "companionAssociate" -> {
+        val filterDeviceId = call.argument<String>("deviceId")
+        val filterServiceUuids = call.argument<List<String>>("serviceUuids")
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+          result.error("UnsupportedAndroidVersion", "Associating companion devices requires Android API 33 or higher", null)
+          return
+        }
+
+        val deviceFilter: BluetoothDeviceFilter = BluetoothDeviceFilter.Builder().let {
+          if (filterDeviceId != null) {
+            it.setAddress(filterDeviceId)
+          }
+
+          filterServiceUuids?.map { uuid ->
+            it.addServiceUuid(ParcelUuid.fromString(uuid), null)
+          }
+          it.build()
+        }
+        val pairingRequest: AssociationRequest = AssociationRequest.Builder()
+          .addDeviceFilter(deviceFilter)
+          .setSingleDevice(true)
+          .build()
+
+        companionDeviceManager.associate(pairingRequest,
+          executor,
+          object : CompanionDeviceManager.Callback() {
+            override fun onAssociationPending(intentSender: IntentSender) {
+                startIntentSenderForResult(activity!!,
+                    intentSender, SELECT_DEVICE_REQUEST_CODE, null, 0, 0, 0, null)
+            }
+
+            override fun onAssociationCreated(associationInfo: AssociationInfo) {
+              var associationId = associationInfo.id
+              var macAddress = associationInfo.deviceMacAddress
+              var displayName = associationInfo.displayName
+
+              result.success(mapOf(
+                "associationId" to associationId,
+                "id" to macAddress.toString(),
+                "name" to displayName
+              ))
+            }
+
+            override fun onFailure(errorMessage: CharSequence?) {
+              result.error("AssociationFailed", errorMessage.toString(), null)
+            }
+          }
+        )
+      }
+      "companionDisassociate" -> {
+        val associationId = call.argument<Int>("associationId")!!
+        companionDeviceManager.disassociate(associationId)
+        result.success(null)
+      }
+      "companionListAssociations" -> {
+        val data = companionDeviceManager.myAssociations.map {
+          mapOf(
+            "associationId" to it.id,
+            "id" to it.deviceMacAddress.toString(),
+            "name" to it.displayName,
+          )
+        }
+        result.success(data)
+      }
       "connect" -> {
         val deviceId = call.argument<String>("deviceId")!!
         if (knownGatts.find { it.device.address == deviceId } != null) {
           return result.success(null)
         }
         val remoteDevice = bluetoothManager.adapter.getRemoteDevice(deviceId)
-        val gatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-          remoteDevice.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
-        } else {
-          remoteDevice.connectGatt(context, false, gattCallback)
-        }
-        knownGatts.add(gatt)
+        connectDevice(remoteDevice)
         result.success(null)
         // TODO connecting
       }
@@ -232,6 +338,11 @@ class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHand
         result.notImplemented()
       }
     }
+  }
+
+  private fun connectDevice(bluetoothDevice: BluetoothDevice) {
+    val gatt = bluetoothDevice.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+    knownGatts.add(gatt)
   }
 
   private fun cleanConnection(gatt: BluetoothGatt) {
