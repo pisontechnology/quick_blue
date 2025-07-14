@@ -50,19 +50,19 @@ class QuickBlueLinux extends QuickBluePlatform {
   }
 
   // FIXME Close
-  final StreamController<dynamic> _scanResultController =
+  final StreamController<BlueScanResult> _scanResultController =
       StreamController.broadcast();
 
   @override
-  Stream get scanResultStream => _scanResultController.stream;
+  Stream<BlueScanResult> get scanResultStream => _scanResultController.stream;
 
   void _onDeviceAdd(BlueZDevice device) {
-    _scanResultController.add({
-      'deviceId': device.address,
-      'name': device.alias,
-      'manufacturerDataHead': device.manufacturerDataHead,
-      'rssi': device.rssi,
-    });
+    _scanResultController.add(BlueScanResult(
+      deviceId: device.address,
+      name: device.alias,
+      manufacturerDataHead: device.manufacturerDataHead,
+      rssi: device.rssi,
+    ));
   }
 
   @override

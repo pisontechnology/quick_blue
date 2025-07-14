@@ -1,5 +1,22 @@
 package com.example.quick_blue
 
+import FlutterError
+import L2CapSocketEventsStreamHandler
+import MtuChangedStreamHandler
+import PigeonEventSink
+import PlatformBleInputProperty
+import PlatformBleOutputProperty
+import PlatformCharacteristicValueChanged
+import PlatformCompanionDevice
+import PlatformConnectionState
+import PlatformConnectionStateChange
+import PlatformL2CapSocketEvent
+import PlatformMtuChange
+import PlatformScanResult
+import PlatformServiceDiscovered
+import QuickBlueApi
+import QuickBlueFlutterApi
+import ScanResultsStreamHandler
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.bluetooth.*
@@ -16,49 +33,47 @@ import android.content.Intent
 import android.content.IntentSender
 import android.os.*
 import android.util.Log
-import androidx.annotation.NonNull
 import androidx.core.app.ActivityCompat.startIntentSenderForResult
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.*
-import io.flutter.plugin.common.MethodChannel.MethodCallHandler
-import io.flutter.plugin.common.MethodChannel.Result
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.*
 import java.util.concurrent.Executor
 
-private const val TAG = "QuickBluePlugin"
 private const val SELECT_DEVICE_REQUEST_CODE = 10011
 
 /** QuickBluePlugin */
 @SuppressLint("MissingPermission")
-class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHandler, PluginRegistry.ActivityResultListener,
-  ActivityAware {
-  /// The MethodChannel that will the communication between Flutter and native Android
-  ///
-  /// This local reference serves to register the plugin with the Flutter Engine and unregister it
-  /// when the Flutter Engine is detached from the Activity
-  private lateinit var method : MethodChannel
-  private lateinit var eventScanResult : EventChannel
-  private lateinit var messageConnector: BasicMessageChannel<Any>
+class QuickBluePlugin: FlutterPlugin, PluginRegistry.ActivityResultListener,
+  ActivityAware, QuickBlueApi {
 
-  override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
-    method = MethodChannel(flutterPluginBinding.binaryMessenger, "quick_blue/method")
-    eventScanResult = EventChannel(flutterPluginBinding.binaryMessenger, "quick_blue/event.scanResult")
-    messageConnector = BasicMessageChannel(flutterPluginBinding.binaryMessenger, "quick_blue/message.connector", StandardMessageCodec.INSTANCE)
+  private val scanResultListener = ScanResultListener()
+  private val mtuChangedListener = MtuChangedListener()
+  private val l2CapSocketEventsListener = L2CapSocketEventsListener()
 
-    method.setMethodCallHandler(this)
-    eventScanResult.setStreamHandler(this)
+  private fun setUp(messenger: BinaryMessenger, context: Context) {
+    QuickBlueApi.setUp(messenger, this)
+    ScanResultsStreamHandler.register(messenger, scanResultListener)
+    MtuChangedStreamHandler.register(messenger, mtuChangedListener)
+    L2CapSocketEventsStreamHandler.register(messenger, l2CapSocketEventsListener)
 
-    context = flutterPluginBinding.applicationContext
-    mainThreadHandler = Handler(Looper.getMainLooper())
-    bluetoothManager = flutterPluginBinding.applicationContext.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-    companionDeviceManager = flutterPluginBinding.applicationContext.getSystemService(Context.COMPANION_DEVICE_SERVICE) as CompanionDeviceManager
+    quickBlueFlutterApi = QuickBlueFlutterApi(messenger)
+    this.context = context
   }
 
-  override fun onDetachedFromEngine(@NonNull binding: FlutterPlugin.FlutterPluginBinding) {
+  override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+    mainThreadHandler = Handler(Looper.getMainLooper())
+    bluetoothManager = binding.applicationContext.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+    companionDeviceManager = binding.applicationContext.getSystemService(Context.COMPANION_DEVICE_SERVICE) as CompanionDeviceManager
+
+    setUp(binding.binaryMessenger, binding.applicationContext)
+  }
+
+  override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+    Log.d("QuickBluePlugin", "onDetachedFromEngine")
     bluetoothManager.adapter.bluetoothLeScanner?.stopScan(scanCallback)
 
     // Disconnect all active devices (call toList to avoid ConcurrentModificationException)
@@ -66,8 +81,7 @@ class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHand
       cleanConnection(gatt)
     }
 
-    eventScanResult.setStreamHandler(null)
-    method.setMethodCallHandler(null)
+    setUp(binding.binaryMessenger, binding.applicationContext)
   }
 
   override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
@@ -103,6 +117,7 @@ class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHand
   private lateinit var mainThreadHandler: Handler
   private lateinit var bluetoothManager: BluetoothManager
   private lateinit var companionDeviceManager: CompanionDeviceManager
+  private var quickBlueFlutterApi: QuickBlueFlutterApi? = null
 
   private var activity: Activity? = null
 
@@ -110,235 +125,6 @@ class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHand
   private val knownGatts = mutableListOf<BluetoothGatt>()
   private val streamDelegates = mutableMapOf<String, L2CapStreamDelegate>()
 
-  private fun sendMessage(messageChannel: BasicMessageChannel<Any>, message: Map<String, Any>) {
-    mainThreadHandler.post { messageChannel.send(message) }
-  }
-
-  override fun onMethodCall(@NonNull call: MethodCall, @NonNull result: Result) {
-    when (call.method) {
-      "isBluetoothAvailable" -> {
-        result.success(bluetoothManager.adapter.isEnabled)
-      }
-      "startScan" -> {
-        val filterServiceUuids = call.argument<List<String>>("serviceUuids")
-        val filterManufacturerData = call.argument<Map<Int, ByteArray>>("manufacturerData")
-
-        val filters = filterServiceUuids?.map {
-          val builder = ScanFilter.Builder()
-            .setServiceUuid(ParcelUuid.fromString(it))
-          if (filterManufacturerData != null) {
-            val id = filterManufacturerData.keys.first()
-            val data = filterManufacturerData[id]
-            builder.setManufacturerData(id, data)
-          }
-          builder.build()
-        }
-        val settings = ScanSettings.Builder()
-          .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
-          .setMatchMode(ScanSettings.MATCH_MODE_STICKY)
-          .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
-          .setReportDelay(0L)
-          .build()
-        bluetoothManager.adapter.bluetoothLeScanner?.startScan(filters, settings, scanCallback)
-        result.success(null)
-      }
-      "stopScan" -> {
-        bluetoothManager.adapter.bluetoothLeScanner?.stopScan(scanCallback)
-        result.success(null)
-      }
-      "companionAssociate" -> {
-        val filterDeviceId = call.argument<String>("deviceId")
-        val filterServiceUuids = call.argument<List<String>>("serviceUuids")
-
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-          result.error("UnsupportedAndroidVersion", "Associating companion devices requires Android API 33 or higher", null)
-          return
-        }
-
-        val deviceFilter: BluetoothDeviceFilter = BluetoothDeviceFilter.Builder().let {
-          if (filterDeviceId != null) {
-            it.setAddress(filterDeviceId)
-          }
-
-          filterServiceUuids?.map { uuid ->
-            it.addServiceUuid(ParcelUuid.fromString(uuid), null)
-          }
-          it.build()
-        }
-        val pairingRequest: AssociationRequest = AssociationRequest.Builder()
-          .addDeviceFilter(deviceFilter)
-          .setSingleDevice(true)
-          .build()
-
-        companionDeviceManager.associate(pairingRequest,
-          executor,
-          object : CompanionDeviceManager.Callback() {
-            override fun onAssociationPending(intentSender: IntentSender) {
-                startIntentSenderForResult(activity!!,
-                    intentSender, SELECT_DEVICE_REQUEST_CODE, null, 0, 0, 0, null)
-            }
-
-            override fun onAssociationCreated(associationInfo: AssociationInfo) {
-              var associationId = associationInfo.id
-              var macAddress = associationInfo.deviceMacAddress
-              var displayName = associationInfo.displayName
-
-              result.success(mapOf(
-                "associationId" to associationId,
-                "id" to macAddress.toString(),
-                "name" to displayName
-              ))
-            }
-
-            override fun onFailure(errorMessage: CharSequence?) {
-              result.error("AssociationFailed", errorMessage.toString(), null)
-            }
-          }
-        )
-      }
-      "companionDisassociate" -> {
-        val associationId = call.argument<Int>("associationId")!!
-        companionDeviceManager.disassociate(associationId)
-        result.success(null)
-      }
-      "companionListAssociations" -> {
-        val data = companionDeviceManager.myAssociations.map {
-          mapOf(
-            "associationId" to it.id,
-            "id" to it.deviceMacAddress.toString(),
-            "name" to it.displayName,
-          )
-        }
-        result.success(data)
-      }
-      "connect" -> {
-        val deviceId = call.argument<String>("deviceId")!!
-        if (knownGatts.find { it.device.address == deviceId } != null) {
-          return result.success(null)
-        }
-        val remoteDevice = bluetoothManager.adapter.getRemoteDevice(deviceId)
-        connectDevice(remoteDevice)
-        result.success(null)
-        // TODO connecting
-      }
-      "disconnect" -> {
-        val deviceId = call.argument<String>("deviceId")!!
-        val gatt = knownGatts.find { it.device.address == deviceId }
-                ?: return result.error("IllegalArgument", "Unknown deviceId: $deviceId", null)
-        cleanConnection(gatt)
-        result.success(null)
-        //FIXME If `disconnect` is called before BluetoothGatt.STATE_CONNECTED
-        // there will be no `disconnected` message any more
-      }
-      "discoverServices" -> {
-        val deviceId = call.argument<String>("deviceId")!!
-        val gatt = knownGatts.find { it.device.address == deviceId }
-                ?: return result.error("IllegalArgument", "Unknown deviceId: $deviceId", null)
-        gatt.discoverServices()
-        result.success(null)
-      }
-      "setNotifiable" -> {
-        val deviceId = call.argument<String>("deviceId")!!
-        val service = call.argument<String>("service")!!
-        val characteristic = call.argument<String>("characteristic")!!
-        val bleInputProperty = call.argument<String>("bleInputProperty")!!
-        val gatt = knownGatts.find { it.device.address == deviceId }
-                ?: return result.error("IllegalArgument", "Unknown deviceId: $deviceId", null)
-        gatt.setNotifiable(service to characteristic, bleInputProperty)
-        result.success(null)
-      }
-      "requestMtu" -> {
-        val deviceId = call.argument<String>("deviceId")!!
-        val expectedMtu = call.argument<Int>("expectedMtu")!!
-        val gatt = knownGatts.find { it.device.address == deviceId }
-                ?: return result.error("IllegalArgument", "Unknown deviceId: $deviceId", null)
-        gatt.requestMtu(expectedMtu)
-        result.success(null)
-      }
-      "readValue" -> {
-        val deviceId = call.argument<String>("deviceId")!!
-        val service = call.argument<String>("service")!!
-        val characteristic = call.argument<String>("characteristic")!!
-        val gatt = knownGatts.find { it.device.address == deviceId }
-                ?: return result.error("IllegalArgument", "Unknown deviceId: $deviceId", null)
-        val readResult = gatt.getCharacteristic(service to characteristic)?.let {
-          gatt.readCharacteristic(it)
-        }
-        if (readResult == true)
-          result.success(null)
-        else
-          result.error("Characteristic unavailable", null, null)
-      }
-      "writeValue" -> {
-        val deviceId = call.argument<String>("deviceId")!!
-        val service = call.argument<String>("service")!!
-        val characteristic = call.argument<String>("characteristic")!!
-        val value = call.argument<ByteArray>("value")!!
-        val gatt = knownGatts.find { it.device.address == deviceId }
-                ?: return result.error("IllegalArgument", "Unknown deviceId: $deviceId", null)
-        val writeResult = gatt.getCharacteristic(service to characteristic)?.let {
-          it.value = value
-          gatt.writeCharacteristic(it)
-        }
-        if (writeResult == true)
-          result.success(null)
-        else
-          result.error("Characteristic unavailable", null, null)
-      }
-      "openL2cap" -> {
-        val deviceId = call.argument<String>("deviceId")!!
-        val psm = call.argument<Int>("psm")!!
-        val gatt = knownGatts.find { it.device.address == deviceId }
-          ?: return result.error("IllegalArgument", "Unknown deviceId: $deviceId", null)
-        val socket = gatt.device.createInsecureL2capChannel(psm)
-        val delegate = L2CapStreamDelegate(socket, openedCallback = {
-          sendMessage(messageConnector, mapOf(
-                  "deviceId" to gatt.device.address,
-                  "l2capStatus" to "opened"
-          ))
-        }, closedCallback =  {
-          sendMessage(messageConnector, mapOf(
-                  "deviceId" to gatt.device.address,
-                  "l2capStatus" to "closed"
-          ))
-        }, streamCallback =  {
-          sendMessage(messageConnector, mapOf(
-                  "deviceId" to gatt.device.address,
-                  "l2capStatus" to "stream",
-                  "data" to it
-          ))
-        }, errorCallback = {
-          sendMessage(messageConnector, mapOf(
-                  "deviceId" to gatt.device.address,
-                  "l2capStatus" to "error",
-                  "error" to (it.message ?: ""),
-          ))
-        })
-
-        streamDelegates[gatt.device.address] = delegate
-        result.success(null)
-      }
-      "closeL2cap" -> {
-        val deviceId = call.argument<String>("deviceId")!!
-        val delegate = streamDelegates[deviceId]
-                ?: return result.error("IllegalArgument", "No stream delegate for deviceId: $deviceId", null)
-        delegate.close()
-        streamDelegates.remove(deviceId)
-        result.success(null)
-      }
-      "_l2cap_write" -> {
-        val deviceId = call.argument<String>("deviceId")!!
-        val data = call.argument<ByteArray>("data")!!
-        val delegate = streamDelegates[deviceId]
-                ?: return result.error("IllegalArgument", "No stream delegate for deviceId: $deviceId", null)
-        delegate.write(data)
-        result.success(null)
-      }
-      else -> {
-        result.notImplemented()
-      }
-    }
-  }
 
   private fun connectDevice(bluetoothDevice: BluetoothDevice) {
     val gatt = bluetoothDevice.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
@@ -357,16 +143,17 @@ class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHand
 
   private val scanCallback = object : ScanCallback() {
     override fun onScanFailed(errorCode: Int) {
-      Log.d(TAG, "onScanFailed: $errorCode")
+      scanResultListener.onScanError(errorCode)
     }
 
     override fun onScanResult(callbackType: Int, result: ScanResult) {
-      scanResultSink?.success(mapOf<String, Any>(
-              "name" to (result.scanRecord?.deviceName ?: ""),
-              "deviceId" to result.device.address,
-              "manufacturerDataHead" to (result.manufacturerDataHead ?: byteArrayOf()),
-              "rssi" to result.rssi,
-              "serviceUuids" to (result.scanRecord?.serviceUuids?.map { it.uuid.toString() } ?: emptyList())
+      scanResultListener.onScanResult(PlatformScanResult(
+        name = result.scanRecord?.deviceName ?: "",
+        deviceId = result.device.address,
+        manufacturerDataHead = result.manufacturerDataHead ?: byteArrayOf(),
+        manufacturerData = byteArrayOf(),
+        rssi = result.rssi.toLong(),
+        serviceUuids = result.scanRecord?.serviceUuids?.map { it.uuid.toString() } ?: emptyList(),
       ))
     }
 
@@ -374,46 +161,34 @@ class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHand
     }
   }
 
-  private var scanResultSink: EventChannel.EventSink? = null
-
-  override fun onListen(args: Any?, eventSink: EventChannel.EventSink?) {
-    val map = args as? Map<String, Any> ?: return
-    when (map["name"]) {
-      "scanResult" -> scanResultSink = eventSink
-    }
-  }
-
-  override fun onCancel(args: Any?) {
-    val map = args as? Map<String, Any> ?: return
-    when (map["name"]) {
-      "scanResult" -> scanResultSink = null
-    }
-  }
-
   private val gattCallback = object : BluetoothGattCallback() {
     override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
       val gattStatus = when(status) {
-        BluetoothGatt.GATT_SUCCESS -> "success"
-        BluetoothGatt.GATT_FAILURE -> "failure"
-        else -> "failure"
+        BluetoothGatt.GATT_SUCCESS -> PlatformGattStatus.SUCCESS
+        BluetoothGatt.GATT_FAILURE -> PlatformGattStatus.FAILURE
+        else -> PlatformGattStatus.FAILURE
       }
-      val connectionState = when(newState) {
-        BluetoothGatt.STATE_CONNECTED -> "connected"
-        BluetoothGatt.STATE_CONNECTING -> "connecting"
-        BluetoothGatt.STATE_DISCONNECTED -> "disconnected"
-        BluetoothGatt.STATE_DISCONNECTING -> "disconnecting"
-        else -> "unknown"
+      val state = when(newState) {
+        BluetoothGatt.STATE_CONNECTED -> PlatformConnectionState.CONNECTED
+        BluetoothGatt.STATE_CONNECTING -> PlatformConnectionState.CONNECTING
+        BluetoothGatt.STATE_DISCONNECTED -> PlatformConnectionState.DISCONNECTED
+        BluetoothGatt.STATE_DISCONNECTING -> PlatformConnectionState.DISCONNECTING
+        else -> PlatformConnectionState.UNKNOWN
       }
+
       // Clear out the connection if something bad happened.
       if (newState == BluetoothGatt.STATE_DISCONNECTED || status != BluetoothGatt.GATT_SUCCESS) {
         cleanConnection(gatt)
       }
 
-      sendMessage(messageConnector, mapOf(
-        "deviceId" to gatt.device.address,
-        "ConnectionState" to connectionState,
-        "status" to gattStatus
-      ))
+      mainThreadHandler.post {
+        quickBlueFlutterApi?.onConnectionStateChange(PlatformConnectionStateChange(
+          deviceId = gatt.device.address,
+          state = state,
+          gattStatus = gattStatus,
+        )) {}
+      }
+
 
       // If we've disconnected, ensure that we also close out the gatt.
       if (newState == BluetoothGatt.STATE_DISCONNECTED) {
@@ -422,48 +197,290 @@ class QuickBluePlugin: FlutterPlugin, MethodCallHandler, EventChannel.StreamHand
     }
 
     override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-      if (status != BluetoothGatt.GATT_SUCCESS) return
-      gatt.services?.forEach { service ->
-        sendMessage(messageConnector, mapOf(
-          "deviceId" to gatt.device.address,
-          "ServiceState" to "discovered",
-          "service" to service.uuid.toString(),
-          "characteristics" to service.characteristics.map { it.uuid.toString() }
-        ))
+      if (status != BluetoothGatt.GATT_SUCCESS) {
+        return
+      }
+
+      mainThreadHandler.post {
+        gatt.services?.forEach { service ->
+          quickBlueFlutterApi?.onServiceDiscovered(
+            PlatformServiceDiscovered(
+            deviceId = gatt.device.address,
+            serviceUuid = service.uuid.toString(),
+            characteristics = service.characteristics.map { it.uuid.toString() }
+          )) {}
+        }
       }
     }
 
-    override fun onMtuChanged(gatt: BluetoothGatt?, mtu: Int, status: Int) {
-      if (status == BluetoothGatt.GATT_SUCCESS) {
-        sendMessage(messageConnector, mapOf(
-          "mtuConfig" to mtu
-        ))
+    override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+      if (status != BluetoothGatt.GATT_SUCCESS) {
+        mtuChangedListener.onScanError(status)
+        return
       }
+
+      mtuChangedListener.onScanResult(PlatformMtuChange(
+        deviceId = gatt.device.address,
+        mtu = mtu.toLong(),
+      ))
     }
 
     override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
-      sendMessage(messageConnector, mapOf(
-        "deviceId" to gatt.device.address,
-        "characteristicValue" to mapOf(
-          "characteristic" to characteristic.uuid.toString(),
-          "value" to characteristic.value
-        )
-      ))
+      if (status != BluetoothGatt.GATT_SUCCESS) {
+        return
+      }
+      mainThreadHandler.post {
+        quickBlueFlutterApi?.onCharacteristicValueChanged(
+          PlatformCharacteristicValueChanged(
+            deviceId = gatt.device.address,
+            characteristicId = characteristic.uuid.toString(),
+            value = characteristic.value,
+          )
+        ) {}
+      }
+    }
+
+    override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
+      mainThreadHandler.post {
+        quickBlueFlutterApi?.onCharacteristicValueChanged(
+          PlatformCharacteristicValueChanged(
+            deviceId = gatt.device.address,
+            characteristicId = characteristic.uuid.toString(),
+            value = characteristic.value,
+          )
+        ) {}
+      }
     }
 
     override fun onCharacteristicWrite(gatt: BluetoothGatt?, characteristic: BluetoothGattCharacteristic, status: Int) {
       // TODO(cg): send this as a message
     }
+  }
 
-    override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-      sendMessage(messageConnector, mapOf(
-        "deviceId" to gatt.device.address,
-        "characteristicValue" to mapOf(
-          "characteristic" to characteristic.uuid.toString(),
-          "value" to characteristic.value
-        )
-      ))
+  override fun isBluetoothAvailable(): Boolean {
+    return bluetoothManager.adapter.isEnabled
+  }
+
+  override fun startScan(
+    serviceUuids: List<String>?,
+    manufacturerData: Map<Long, ByteArray>?
+  ) {
+    val filters = serviceUuids?.map {
+      val builder = ScanFilter.Builder()
+        .setServiceUuid(ParcelUuid.fromString(it))
+      if (manufacturerData != null) {
+        val id = manufacturerData.keys.first()
+        val data = manufacturerData[id]
+        builder.setManufacturerData(id.toInt(), data)
+      }
+      builder.build()
     }
+    val settings = ScanSettings.Builder()
+      .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
+      .setMatchMode(ScanSettings.MATCH_MODE_STICKY)
+      .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+      .setReportDelay(0L)
+      .build()
+    bluetoothManager.adapter.bluetoothLeScanner?.startScan(filters, settings, scanCallback)
+  }
+
+  override fun stopScan() {
+    bluetoothManager.adapter.bluetoothLeScanner?.stopScan(scanCallback)
+  }
+
+  override fun connect(deviceId: String) {
+    if (knownGatts.find { it.device.address == deviceId } != null) {
+      // Already connected
+      return
+    }
+    val remoteDevice = bluetoothManager.adapter.getRemoteDevice(deviceId)
+    connectDevice(remoteDevice)
+  }
+
+  override fun disconnect(deviceId: String) {
+    val gatt = knownGatts.find { it.device.address == deviceId }
+      ?: throw FlutterError("IllegalArgument", "Unknown deviceId: $deviceId", null)
+    cleanConnection(gatt)
+  }
+
+  override fun companionAssociate(
+      deviceId: String?,
+      serviceUuids: List<String>?,
+      manufacturerData: Map<Long, ByteArray>?,
+      callback: (kotlin.Result<PlatformCompanionDevice?>) -> Unit
+  ) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+      throw FlutterError("UnsupportedAndroidVersion", "Associating companion devices requires Android API 33 or higher", null)
+    }
+
+    val deviceFilter: BluetoothDeviceFilter = BluetoothDeviceFilter.Builder().let {
+      if (deviceId != null) {
+        it.setAddress(deviceId)
+      }
+
+      serviceUuids?.map { uuid ->
+        it.addServiceUuid(ParcelUuid.fromString(uuid), null)
+      }
+      it.build()
+    }
+    val pairingRequest: AssociationRequest = AssociationRequest.Builder()
+      .addDeviceFilter(deviceFilter)
+      .setSingleDevice(true)
+      .build()
+
+    companionDeviceManager.associate(pairingRequest,
+      executor,
+      object : CompanionDeviceManager.Callback() {
+        override fun onAssociationPending(intentSender: IntentSender) {
+          startIntentSenderForResult(activity!!,
+            intentSender, SELECT_DEVICE_REQUEST_CODE, null, 0, 0, 0, null)
+        }
+
+        override fun onAssociationCreated(associationInfo: AssociationInfo) {
+          callback(Result.success(PlatformCompanionDevice(
+            associationInfo.deviceMacAddress.toString(), associationInfo.displayName.toString(), associationInfo.id.toLong(),
+          )))
+        }
+
+        override fun onFailure(errorMessage: CharSequence?) {
+          callback(Result.failure(FlutterError("AssociationFailed", errorMessage.toString(), null)))
+        }
+      }
+    )
+  }
+
+  override fun companionDisassociate(associationId: Long) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+      throw FlutterError("UnsupportedAndroidVersion", "Associating companion devices requires Android API 33 or higher", null)
+    }
+    companionDeviceManager.disassociate(associationId.toInt())
+  }
+
+  override fun getCompanionAssociations(): List<PlatformCompanionDevice> {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+      throw FlutterError("UnsupportedAndroidVersion", "Associating companion devices requires Android API 33 or higher", null)
+    }
+
+    return companionDeviceManager.myAssociations.map {
+      PlatformCompanionDevice(
+        associationId = it.id.toLong(),
+        id = it.deviceMacAddress.toString(),
+        name = it.displayName.toString(),
+      )
+    }
+  }
+
+  override fun discoverServices(deviceId: String) {
+    val gatt = knownGatts.find { it.device.address == deviceId }
+      ?: throw FlutterError("IllegalArgument", "Unknown deviceId: $deviceId", null)
+    gatt.discoverServices()
+  }
+
+  override fun setNotifiable(
+    deviceId: String,
+    service: String,
+    characteristic: String,
+    bleInputProperty: PlatformBleInputProperty
+  ) {
+    val gatt = knownGatts.find { it.device.address == deviceId }
+      ?: throw FlutterError("IllegalArgument", "Unknown deviceId: $deviceId", null)
+    gatt.setNotifiable(service to characteristic, bleInputProperty)  }
+
+  override fun readValue(
+    deviceId: String,
+    service: String,
+    characteristic: String
+  ) {
+    val gatt = knownGatts.find { it.device.address == deviceId }
+      ?: throw FlutterError("IllegalArgument", "Unknown deviceId: $deviceId", null)
+    val readResult = gatt.getCharacteristic(service to characteristic)?.let {
+      gatt.readCharacteristic(it)
+    }
+    if (readResult == true)
+      return
+    else
+      throw FlutterError("Characteristic unavailable", null, null)
+  }
+
+  override fun writeValue(
+    deviceId: String,
+    service: String,
+    characteristic: String,
+    value: ByteArray,
+    bleOutputProperty: PlatformBleOutputProperty
+  ) {
+    val gatt = knownGatts.find { it.device.address == deviceId }
+      ?: throw FlutterError("IllegalArgument", "Unknown deviceId: $deviceId", null)
+    val writeResult = gatt.getCharacteristic(service to characteristic)?.let {
+      it.value = value
+      gatt.writeCharacteristic(it)
+    }
+    if (writeResult == true)
+      return
+    else
+      throw FlutterError("Characteristic unavailable", null, null)
+  }
+
+  override fun requestMtu(deviceId: String, expectedMtu: Long): Long {
+    val gatt = knownGatts.find { it.device.address == deviceId }
+      ?: throw FlutterError("IllegalArgument", "Unknown deviceId: $deviceId", null)
+    gatt.requestMtu(expectedMtu.toInt())
+    return 0
+  }
+
+  override fun openL2cap(deviceId: String, psm: Long, callback: (Result<Unit>) -> Unit) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+      throw FlutterError("UnsupportedAndroidVersion", "L2CAP requires Android API 29 or higher", null)
+    }
+
+    val gatt = knownGatts.find { it.device.address == deviceId }
+      ?: throw FlutterError("IllegalArgument", "Unknown deviceId: $deviceId", null)
+    val socket = gatt.device.createInsecureL2capChannel(psm.toInt())
+    val delegate = L2CapStreamDelegate(socket, openedCallback = {
+      callback(Result.success(Unit))
+    }, closedCallback =  {
+      mainThreadHandler.post {
+        l2CapSocketEventsListener.onScanResult(
+          PlatformL2CapSocketEvent(
+            deviceId = gatt.device.address,
+            closed = true,
+          )
+        )
+      }
+    }, streamCallback =  {
+      mainThreadHandler.post {
+        l2CapSocketEventsListener.onScanResult(
+          PlatformL2CapSocketEvent(
+            deviceId = gatt.device.address,
+            data = it,
+          )
+        )
+      }
+    }, errorCallback = {
+      mainThreadHandler.post {
+        l2CapSocketEventsListener.onScanResult(
+          PlatformL2CapSocketEvent(
+            deviceId = gatt.device.address,
+            error = it.message ?: "",
+          )
+        )
+      }
+    })
+
+    streamDelegates[gatt.device.address] = delegate
+  }
+
+  override fun closeL2cap(deviceId: String) {
+    val delegate = streamDelegates[deviceId]
+      ?: throw FlutterError("IllegalArgument", "No stream delegate for deviceId: $deviceId", null)
+    delegate.close()
+    streamDelegates.remove(deviceId)
+  }
+
+  override fun writeL2cap(deviceId: String, value: ByteArray) {
+    val delegate = streamDelegates[deviceId]
+      ?: throw FlutterError("IllegalArgument", "No stream delegate for deviceId: $deviceId", null)
+    delegate.write(value)
   }
 }
 
@@ -549,13 +566,76 @@ fun BluetoothGatt.getCharacteristic(serviceCharacteristic: Pair<String, String>)
 
 private val DESC__CLIENT_CHAR_CONFIGURATION = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
-fun BluetoothGatt.setNotifiable(serviceCharacteristic: Pair<String, String>, bleInputProperty: String) {
+fun BluetoothGatt.setNotifiable(serviceCharacteristic: Pair<String, String>, bleInputProperty: PlatformBleInputProperty) {
   val descriptor = getCharacteristic(serviceCharacteristic).getDescriptor(DESC__CLIENT_CHAR_CONFIGURATION)
   val (value, enable) = when (bleInputProperty) {
-    "notification" -> BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE to true
-    "indication" -> BluetoothGattDescriptor.ENABLE_INDICATION_VALUE to true
+    PlatformBleInputProperty.NOTIFICATION -> BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE to true
+    PlatformBleInputProperty.INDICATION -> BluetoothGattDescriptor.ENABLE_INDICATION_VALUE to true
     else -> BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE to false
   }
   descriptor.value = value
   setCharacteristicNotification(descriptor.characteristic, enable) && writeDescriptor(descriptor)
+}
+
+class ScanResultListener : ScanResultsStreamHandler() {
+  private var eventSink: PigeonEventSink<PlatformScanResult>? = null
+
+  override fun onListen(p0: Any?, sink: PigeonEventSink<PlatformScanResult>) {
+    eventSink = sink
+  }
+
+  fun onScanResult(result: PlatformScanResult) {
+    eventSink?.success(result)
+  }
+
+  fun onScanError(errorCode: Int) {
+    eventSink?.error("ScanError", "Error while scanning", errorCode)
+  }
+
+  fun onEventsDone() {
+    eventSink?.endOfStream()
+    eventSink = null
+  }
+}
+
+class MtuChangedListener : MtuChangedStreamHandler() {
+  private var eventSink: PigeonEventSink<PlatformMtuChange>? = null
+
+  override fun onListen(p0: Any?, sink: PigeonEventSink<PlatformMtuChange>) {
+    eventSink = sink
+  }
+
+  fun onScanResult(result: PlatformMtuChange) {
+    eventSink?.success(result)
+  }
+
+  fun onScanError(errorCode: Int) {
+    eventSink?.error("ScanError", "", errorCode)
+  }
+
+  fun onEventsDone() {
+    eventSink?.endOfStream()
+    eventSink = null
+  }
+}
+
+class L2CapSocketEventsListener : L2CapSocketEventsStreamHandler() {
+  private var eventSink: PigeonEventSink<PlatformL2CapSocketEvent>? = null
+
+  override fun onListen(p0: Any?, sink: PigeonEventSink<PlatformL2CapSocketEvent>) {
+    eventSink = sink
+  }
+
+  fun onScanResult(result: PlatformL2CapSocketEvent) {
+    eventSink?.success(result)
+  }
+
+  fun onScanError(errorCode: Int) {
+    eventSink?.error("ScanError", "", errorCode)
+  }
+
+  fun onEventsDone() {
+    eventSink?.endOfStream()
+    eventSink = null
+  }
 }
