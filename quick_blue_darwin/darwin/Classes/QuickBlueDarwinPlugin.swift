@@ -1,79 +1,299 @@
 import CoreBluetooth
 
 #if os(iOS)
-import Flutter
+    import Flutter
 #elseif os(OSX)
-import FlutterMacOS
+    import FlutterMacOS
 #endif
-
-let GATT_HEADER_LENGTH = 3
 
 let GSS_SUFFIX = "0000-1000-8000-00805f9b34fb"
 
-private var targetManufacturerData: Data?
-
 extension CBUUID {
     public var uuidStr: String {
-        get {
-            uuidString.lowercased()
-        }
+        uuidString.lowercased()
     }
 }
 
 extension CBPeripheral {
     // FIXME https://forums.developer.apple.com/thread/84375
     public var uuid: UUID {
-        get {
-            value(forKey: "identifier") as! NSUUID as UUID
-        }
+        value(forKey: "identifier") as! NSUUID as UUID
     }
 
-    public func getCharacteristic(_ characteristic: String, of service: String) -> CBCharacteristic? {
+    public func getCharacteristic(_ characteristic: String, of service: String)
+        -> CBCharacteristic?
+    {
         let s = self.services?.first {
-            $0.uuid.uuidStr == service || "0000\($0.uuid.uuidStr)-\(GSS_SUFFIX)" == service
+            $0.uuid.uuidStr == service
+                || "0000\($0.uuid.uuidStr)-\(GSS_SUFFIX)" == service
         }
         let c = s?.characteristics?.first {
-            $0.uuid.uuidStr == characteristic || "0000\($0.uuid.uuidStr)-\(GSS_SUFFIX)" == characteristic
+            $0.uuid.uuidStr == characteristic
+                || "0000\($0.uuid.uuidStr)-\(GSS_SUFFIX)" == characteristic
         }
         return c
     }
-    
-    public func setNotifiable(_ bleInputProperty: String, for characteristic: String, of service: String) {
-        setNotifyValue(bleInputProperty != "disabled", for: getCharacteristic(characteristic, of: service)!)
+
+    func setNotifiable(
+        _ bleInputProperty: PlatformBleInputProperty,
+        for characteristic: String,
+        of service: String
+    ) {
+        setNotifyValue(
+            bleInputProperty != PlatformBleInputProperty.disabled,
+            for: getCharacteristic(characteristic, of: service)!
+        )
     }
 }
 
-public class QuickBlueDarwinPlugin: NSObject, FlutterPlugin {
+public class QuickBlueDarwinPlugin: NSObject, FlutterPlugin, QuickBlueApi {
+    func getConnectedPeripherals(serviceUuids: [String]) throws -> [Peripheral]
+    {
+        let peripherals = manager.retrieveConnectedPeripherals(
+            withServices: serviceUuids.map { uuid in CBUUID(string: uuid) }
+        )
+        return peripherals.map { peripherals in
+            Peripheral(
+                id: peripherals.uuid.uuidString,
+                name: peripherals.name ?? ""
+            )
+        }
+    }
+
     public static func register(with registrar: FlutterPluginRegistrar) {
         #if os(iOS)
-        let messenger = registrar.messenger()
+            let messenger = registrar.messenger()
         #elseif os(OSX)
-        let messenger = registrar.messenger
+            let messenger = registrar.messenger
         #endif
-        
-        
-        let method = FlutterMethodChannel(name: "quick_blue/method", binaryMessenger: messenger)
-        let eventScanResult = FlutterEventChannel(name: "quick_blue/event.scanResult", binaryMessenger: messenger)
-        let messageConnector = FlutterBasicMessageChannel(name: "quick_blue/message.connector", binaryMessenger: messenger)
-        
-        let instance = QuickBlueDarwinPlugin()
-        registrar.addMethodCallDelegate(instance, channel: method)
-        eventScanResult.setStreamHandler(instance)
-        instance.messageConnector = messageConnector
+
+        let flutterApi = QuickBlueFlutterApi(binaryMessenger: messenger)
+        let instance = QuickBlueDarwinPlugin(flutterApi: flutterApi)
+        QuickBlueApiSetup.setUp(binaryMessenger: messenger, api: instance)
+        ScanResultListener.register(
+            with: messenger,
+            streamHandler: instance.scanResultListener
+        )
+        L2CapSocketEventsListener.register(
+            with: messenger,
+            streamHandler: instance.l2CapSocketEventsListener
+        )
     }
-    
+
+    private var flutterApi: QuickBlueFlutterApi
+    private var scanResultListener: ScanResultListener
+    private var l2CapSocketEventsListener: L2CapSocketEventsListener
+
     private var manager: CBCentralManager!
-    private var discoveredPeripherals: Dictionary<String, CBPeripheral>!
-    private var streamDelegates: Dictionary<String, L2CapStreamDelegate>!
-    
-    private var scanResultSink: FlutterEventSink?
-    private var messageConnector: FlutterBasicMessageChannel!
-    
-    override init() {
+    private var discoveredPeripherals: [String: CBPeripheral]!
+    private var streamDelegates: [String: L2CapStreamDelegate]!
+
+    private var targetManufacturerData: Data?
+
+    init(flutterApi: QuickBlueFlutterApi) {
+        self.flutterApi = flutterApi
+        self.scanResultListener = ScanResultListener()
+        self.l2CapSocketEventsListener = L2CapSocketEventsListener()
+
         super.init()
         manager = CBCentralManager(delegate: self, queue: nil)
         discoveredPeripherals = Dictionary()
         streamDelegates = Dictionary()
+    }
+
+    func isBluetoothAvailable() throws -> Bool {
+        return manager.state == .poweredOn
+    }
+
+    func startScan(
+        serviceUuids: [String]?,
+        manufacturerData: [Int64: FlutterStandardTypedData]?
+    ) throws {
+        let withServices = serviceUuids?.map { uuid in CBUUID(string: uuid) }
+        // Handle manufacturer data if provided
+        if let manufacturerId = manufacturerData?.keys.first,
+            let data = manufacturerData?[manufacturerId]
+        {
+            var mByteArray = withUnsafeBytes(
+                of: UInt16(manufacturerId).littleEndian
+            ) { Array($0) }
+            mByteArray.append(contentsOf: data.data)
+
+            let givenManufacturerData = Data(_: mByteArray)
+            targetManufacturerData = givenManufacturerData
+        }
+
+        manager.scanForPeripherals(
+            withServices: withServices,
+            options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
+        )
+    }
+
+    func stopScan() throws {
+        manager.stopScan()
+    }
+
+    func connect(deviceId: String) throws {
+        guard let peripheral = discoveredPeripherals[deviceId] else {
+            throw PigeonError(
+                code: "IllegalArgument",
+                message: "Unknown deviceId:\(deviceId)",
+                details: nil
+            )
+        }
+
+        peripheral.delegate = self
+        manager.connect(peripheral)
+    }
+
+    func disconnect(deviceId: String) throws {
+        guard let peripheral = discoveredPeripherals[deviceId] else {
+            throw PigeonError(
+                code: "IllegalArgument",
+                message: "Unknown deviceId:\(deviceId)",
+                details: nil
+            )
+        }
+        cleanConnection(peripheral)
+    }
+
+    func discoverServices(deviceId: String) throws {
+        guard let peripheral = discoveredPeripherals[deviceId] else {
+            throw PigeonError(
+                code: "IllegalArgument",
+                message: "Unknown deviceId:\(deviceId)",
+                details: nil
+            )
+        }
+        peripheral.discoverServices(nil)
+    }
+
+    func setNotifiable(
+        deviceId: String,
+        service: String,
+        characteristic: String,
+        bleInputProperty: PlatformBleInputProperty
+    ) throws {
+        guard let peripheral = discoveredPeripherals[deviceId] else {
+            throw PigeonError(
+                code: "IllegalArgument",
+                message: "Unknown deviceId:\(deviceId)",
+                details: nil
+            )
+        }
+        guard
+            let cbCharacteristic = peripheral.getCharacteristic(
+                characteristic,
+                of: service
+            )
+        else {
+            throw PigeonError(
+                code: "IllegalArgument",
+                message: "Unknown characteristic:\(characteristic)",
+                details: nil
+            )
+        }
+        peripheral.setNotifiable(
+            bleInputProperty,
+            for: characteristic,
+            of: service
+        )
+    }
+
+    func readValue(deviceId: String, service: String, characteristic: String)
+        throws
+    {
+        guard let peripheral = discoveredPeripherals[deviceId] else {
+            throw PigeonError(
+                code: "IllegalArgument",
+                message: "Unknown deviceId:\(deviceId)",
+                details: nil
+            )
+        }
+        guard
+            let cbCharacteristic = peripheral.getCharacteristic(
+                characteristic,
+                of: service
+            )
+        else {
+            throw PigeonError(
+                code: "IllegalArgument",
+                message: "Unknown characteristic:\(characteristic)",
+                details: nil
+            )
+        }
+        peripheral.readValue(for: cbCharacteristic)
+    }
+
+    func writeValue(
+        deviceId: String,
+        service: String,
+        characteristic: String,
+        value: FlutterStandardTypedData,
+        bleOutputProperty: PlatformBleOutputProperty
+    ) throws {
+        guard let peripheral = discoveredPeripherals[deviceId] else {
+            throw PigeonError(
+                code: "IllegalArgument",
+                message: "Unknown deviceId:\(deviceId)",
+                details: nil
+            )
+        }
+        guard
+            let cbCharacteristic = peripheral.getCharacteristic(
+                characteristic,
+                of: service
+            )
+        else {
+            throw PigeonError(
+                code: "IllegalArgument",
+                message: "Unknown characteristic:\(characteristic)",
+                details: nil
+            )
+        }
+        let type =
+            bleOutputProperty == PlatformBleOutputProperty.withoutResponse
+            ? CBCharacteristicWriteType.withoutResponse
+            : CBCharacteristicWriteType.withResponse
+        peripheral.writeValue(value.data, for: cbCharacteristic, type: type)
+    }
+
+    func openL2cap(
+        deviceId: String,
+        psm: Int64,
+    ) throws {
+        guard let peripheral = discoveredPeripherals[deviceId] else {
+            throw
+                PigeonError(
+                    code: "IllegalArgument",
+                    message: "Unknown deviceId:\(deviceId)",
+                    details: nil
+                )
+        }
+        peripheral.openL2CAPChannel(CBL2CAPPSM(psm))
+    }
+
+    func closeL2cap(deviceId: String) throws {
+        guard let streamDelegate = streamDelegates[deviceId] else {
+            throw PigeonError(
+                code: "IllegalArgument",
+                message: "No stream delegate for deviceId:\(deviceId)",
+                details: nil
+            )
+        }
+        streamDelegate.close()
+        streamDelegates.removeValue(forKey: deviceId)
+    }
+
+    func writeL2cap(deviceId: String, value: FlutterStandardTypedData) throws {
+        guard let streamDelegate = streamDelegates[deviceId] else {
+            throw PigeonError(
+                code: "IllegalArgument",
+                message: "No stream delegate for deviceId:\(deviceId)",
+                details: nil
+            )
+        }
+        streamDelegate.write(data: value.data)
     }
 
     public func detachFromEngine(for registrar: FlutterPluginRegistrar) {
@@ -84,10 +304,6 @@ public class QuickBlueDarwinPlugin: NSObject, FlutterPlugin {
         for (_, peripheral) in discoveredPeripherals {
             cleanConnection(peripheral)
         }
-
-        // Clean up resources
-        scanResultSink = nil
-        messageConnector.setMessageHandler(nil)
     }
 
     private func cleanConnection(_ peripheral: CBPeripheral) {
@@ -97,404 +313,425 @@ public class QuickBlueDarwinPlugin: NSObject, FlutterPlugin {
         }
         manager.cancelPeripheralConnection(peripheral)
     }
-    
-    public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
-        switch call.method {
-        case "isBluetoothAvailable":
-            result(manager.state == .poweredOn)
-        case "startScan":
-            let arguments = call.arguments as! Dictionary<String, Any>
-            let filterServiceUuids = arguments["serviceUuids"] as! Array<String>
-            let withServices = filterServiceUuids.map { uuid in CBUUID(string: uuid) }
-            // Handle manufacturer data if provided
-            if let manufacturerDataDict = arguments["manufacturerData"] as? [Int: FlutterStandardTypedData] {
-                if let manufacturerId = manufacturerDataDict.keys.first,
-                   let manufacturerData = manufacturerDataDict[manufacturerId] {
-                    
-                    var mByteArray = withUnsafeBytes(of: UInt16(manufacturerId).littleEndian) { Array($0) }
-                    mByteArray.append(contentsOf: manufacturerData.data)
-                    
-                    let givenManufacturerData = Data(_: mByteArray)
-                    targetManufacturerData = givenManufacturerData
-                }
-            }
-            manager.scanForPeripherals(withServices: withServices, options: [CBCentralManagerScanOptionAllowDuplicatesKey : true])
-            result(nil)
-        case "stopScan":
-            manager.stopScan()
-            result(nil)
-        case "connect":
-            let arguments = call.arguments as! Dictionary<String, Any>
-            let deviceId = arguments["deviceId"] as! String
-            guard let peripheral = discoveredPeripherals[deviceId] else {
-                result(FlutterError(code: "IllegalArgument", message: "Unknown deviceId:\(deviceId)", details: nil))
-                return
-            }
-            peripheral.delegate = self
-            manager.connect(peripheral)
-            result(nil)
-        case "disconnect":
-            let arguments = call.arguments as! Dictionary<String, Any>
-            let deviceId = arguments["deviceId"] as! String
-            guard let peripheral = discoveredPeripherals[deviceId] else {
-                result(FlutterError(code: "IllegalArgument", message: "Unknown deviceId:\(deviceId)", details: nil))
-                return
-            }
-            cleanConnection(peripheral)
-            result(nil)
-        case "discoverServices":
-            let arguments = call.arguments as! Dictionary<String, Any>
-            let deviceId = arguments["deviceId"] as! String
-            guard let peripheral = discoveredPeripherals[deviceId] else {
-                result(FlutterError(code: "IllegalArgument", message: "Unknown deviceId:\(deviceId)", details: nil))
-                return
-            }
-            peripheral.discoverServices(nil)
-            result(nil)
-        case "setNotifiable":
-            let arguments = call.arguments as! Dictionary<String, Any>
-            let deviceId = arguments["deviceId"] as! String
-            let service = arguments["service"] as! String
-            let characteristic = arguments["characteristic"] as! String
-            let bleInputProperty = arguments["bleInputProperty"] as! String
-            guard let peripheral = discoveredPeripherals[deviceId] else {
-                result(FlutterError(code: "IllegalArgument", message: "Unknown deviceId:\(deviceId)", details: nil))
-                return
-            }
-            guard let cbCharacteristic = peripheral.getCharacteristic(characteristic, of: service) else {
-                result(FlutterError(code: "IllegalArgument", message: "Unknown characteristic:\(characteristic)", details: nil))
-                return
-            }
-            peripheral.setNotifiable(bleInputProperty, for: characteristic, of: service)
-            result(nil)
-        case "requestMtu":
-            let arguments = call.arguments as! Dictionary<String, Any>
-            let deviceId = arguments["deviceId"] as! String
-            guard let peripheral = discoveredPeripherals[deviceId] else {
-                result(FlutterError(code: "IllegalArgument", message: "Unknown deviceId:\(deviceId)", details: nil))
-                return
-            }
-            result(nil)
-            let mtu = peripheral.maximumWriteValueLength(for: .withoutResponse)
-            messageConnector.sendMessage(["mtuConfig": mtu + GATT_HEADER_LENGTH])
-        case "readValue":
-            let arguments = call.arguments as! Dictionary<String, Any>
-            let deviceId = arguments["deviceId"] as! String
-            let service = arguments["service"] as! String
-            let characteristic = arguments["characteristic"] as! String
-            guard let peripheral = discoveredPeripherals[deviceId] else {
-                result(FlutterError(code: "IllegalArgument", message: "Unknown deviceId:\(deviceId)", details: nil))
-                return
-            }
-            guard let cbCharacteristic = peripheral.getCharacteristic(characteristic, of: service) else {
-                result(FlutterError(code: "IllegalArgument", message: "Unknown characteristic:\(characteristic)", details: nil))
-                return
-            }
-            peripheral.readValue(for: cbCharacteristic)
-            result(nil)
-        case "writeValue":
-            let arguments = call.arguments as! Dictionary<String, Any>
-            let deviceId = arguments["deviceId"] as! String
-            let service = arguments["service"] as! String
-            let characteristic = arguments["characteristic"] as! String
-            let value = arguments["value"] as! FlutterStandardTypedData
-            let bleOutputProperty = arguments["bleOutputProperty"] as! String
-            guard let peripheral = discoveredPeripherals[deviceId] else {
-                result(FlutterError(code: "IllegalArgument", message: "Unknown deviceId:\(deviceId)", details: nil))
-                return
-            }
-            guard let cbCharacteristic = peripheral.getCharacteristic(characteristic, of: service) else {
-                result(FlutterError(code: "IllegalArgument", message: "Unknown characteristic:\(characteristic)", details: nil))
-                return
-            }
-            let type = bleOutputProperty == "withoutResponse" ? CBCharacteristicWriteType.withoutResponse : CBCharacteristicWriteType.withResponse
-            peripheral.writeValue(value.data, for: cbCharacteristic, type: type)
-            result(nil)
-        case "openL2cap":
-            let arguments = call.arguments as! Dictionary<String, Any>
-            let deviceId = arguments["deviceId"] as! String
-            let psm = arguments["psm"] as! CBL2CAPPSM
-            guard let peripheral = discoveredPeripherals[deviceId] else {
-                result(FlutterError(code: "IllegalArgument", message: "Unknown deviceId:\(deviceId)", details: nil))
-                return
-            }
-            peripheral.openL2CAPChannel(psm)
-            result(nil)
-        case "closeL2cap":
-            let arguments = call.arguments as! Dictionary<String, Any>
-            let deviceId = arguments["deviceId"] as! String
-            guard let streamDelegate = streamDelegates[deviceId] else {
-                result(FlutterError(code: "IllegalArgument", message: "No stream delegate for deviceId:\(deviceId)", details: nil))
-                return
-            }
-            streamDelegate.close()
-            streamDelegates.removeValue(forKey: deviceId)
-            result(nil)
-        case "_l2cap_write":
-            let arguments = call.arguments as! Dictionary<String, Any>
-            let deviceId = arguments["deviceId"] as! String
-            let data = arguments["data"] as! FlutterStandardTypedData
-            guard let streamDelegate = streamDelegates[deviceId] else {
-                result(FlutterError(code: "IllegalArgument", message: "No stream delegate for deviceId:\(deviceId)", details: nil))
-                return
-            }
-            streamDelegate.write(data: data.data)
-            result(nil)
-        default:
-            result(FlutterMethodNotImplemented)
-        }
-    }
 }
 
 extension QuickBlueDarwinPlugin: CBCentralManagerDelegate {
     public func centralManagerDidUpdateState(_ central: CBCentralManager) {
     }
-    
-    public func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String: Any], rssi RSSI: NSNumber) {
+
+    public func centralManager(
+        _ central: CBCentralManager,
+        didDiscover peripheral: CBPeripheral,
+        advertisementData: [String: Any],
+        rssi RSSI: NSNumber
+    ) {
         discoveredPeripherals[peripheral.uuid.uuidString] = peripheral
-        
-        let manufacturerData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data
-        let serviceUuids = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []
-        if (targetManufacturerData != nil) {
-            if (targetManufacturerData == manufacturerData) {
-                scanResultSink?([
-                    "name": peripheral.name ?? "",
-                    "deviceId": peripheral.uuid.uuidString,
-                    "manufacturerData": FlutterStandardTypedData(bytes: manufacturerData ?? Data()),
-                    "rssi": RSSI,
-                    "serviceUuids": serviceUuids.map { $0.uuidString }
-                ])
+
+        let manufacturerData =
+            advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data
+        let serviceUuids =
+            advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]
+            ?? []
+        if targetManufacturerData != nil {
+            if targetManufacturerData == manufacturerData {
+                scanResultListener.onEvent(
+                    event: PlatformScanResult(
+                        name: peripheral.name ?? "",
+                        deviceId: peripheral.uuid.uuidString,
+                        manufacturerDataHead: FlutterStandardTypedData(
+                            bytes: manufacturerData ?? Data()
+                        ),
+                        manufacturerData: FlutterStandardTypedData(
+                            bytes: Data()
+                        ),
+                        rssi: Int64(truncating: RSSI),
+                        serviceUuids: serviceUuids.map { $0.uuidString }
+                    )
+                )
             }
         } else {
-            scanResultSink?([
-                "name": peripheral.name ?? "",
-                "deviceId": peripheral.uuid.uuidString,
-                "manufacturerData": FlutterStandardTypedData(bytes: manufacturerData ?? Data()),
-                "rssi": RSSI,
-                "serviceUuids": serviceUuids.map { $0.uuidString }
-            ])
+            scanResultListener.onEvent(
+                event: PlatformScanResult(
+                    name: peripheral.name ?? "",
+                    deviceId: peripheral.uuid.uuidString,
+                    manufacturerDataHead: FlutterStandardTypedData(
+                        bytes: Data()
+                    ),
+                    manufacturerData: FlutterStandardTypedData(bytes: Data()),
+                    rssi: Int64(truncating: RSSI),
+                    serviceUuids: serviceUuids.map { $0.uuidString }
+                )
+            )
         }
     }
-    
-    public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        messageConnector.sendMessage([
-            "deviceId": peripheral.uuid.uuidString,
-            "ConnectionState": "connected",
-            "status": "success",
-        ])
+
+    public func centralManager(
+        _ central: CBCentralManager,
+        didConnect peripheral: CBPeripheral
+    ) {
+        flutterApi.onConnectionStateChange(
+            stateChange: PlatformConnectionStateChange(
+                deviceId: peripheral.uuid.uuidString,
+                state: PlatformConnectionState.connected,
+                gattStatus: PlatformGattStatus.success
+            ),
+            completion: { _ in }
+        )
+
     }
-    
-    public func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
+
+    public func centralManager(
+        _ central: CBCentralManager,
+        didDisconnectPeripheral peripheral: CBPeripheral,
+        error: Error?
+    ) {
         if let error = error {
             central.cancelPeripheralConnection(peripheral)
-            if let streamDelegate = streamDelegates[peripheral.uuid.uuidString] {
+            if let streamDelegate = streamDelegates[peripheral.uuid.uuidString]
+            {
                 streamDelegate.close()
             }
         }
-        messageConnector.sendMessage([
-            "deviceId": peripheral.uuid.uuidString,
-            "ConnectionState": "disconnected",
-            "status": error == nil ? "success" : "failure",
-        ])
-    }
-}
-
-extension QuickBlueDarwinPlugin: FlutterStreamHandler {
-    open func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
-        guard let args = arguments as? Dictionary<String, Any>, let name = args["name"] as? String else {
-            return nil
-        }
-        if name == "scanResult" {
-            scanResultSink = events
-        }
-        return nil
-    }
-    
-    open func onCancel(withArguments arguments: Any?) -> FlutterError? {
-        guard let args = arguments as? Dictionary<String, Any>, let name = args["name"] as? String else {
-            return nil
-        }
-        if name == "scanResult" {
-            scanResultSink = nil
-        }
-        return nil
+        flutterApi.onConnectionStateChange(
+            stateChange: PlatformConnectionStateChange(
+                deviceId: peripheral.uuid.uuidString,
+                state: PlatformConnectionState.disconnected,
+                gattStatus: error == nil
+                    ? PlatformGattStatus.success : PlatformGattStatus.failure
+            ),
+            completion: { _ in }
+        )
     }
 }
 
 extension QuickBlueDarwinPlugin: CBPeripheralDelegate {
-    public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+    public func peripheral(
+        _ peripheral: CBPeripheral,
+        didDiscoverServices error: Error?
+    ) {
         for service in peripheral.services! {
             peripheral.discoverCharacteristics(nil, for: service)
         }
     }
-    
-    public func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
-        self.messageConnector.sendMessage([
-            "deviceId": peripheral.uuid.uuidString,
-            "ServiceState": "discovered",
-            "service": service.uuid.uuidStr,
-            "characteristics": service.characteristics!.map { $0.uuid.uuidStr }
-        ])
+
+    public func peripheral(
+        _ peripheral: CBPeripheral,
+        didDiscoverCharacteristicsFor service: CBService,
+        error: Error?
+    ) {
+        flutterApi.onServiceDiscovered(
+            serviceDiscovered: PlatformServiceDiscovered(
+                deviceId: peripheral.uuid.uuidString,
+                serviceUuid: service.uuid.uuidStr,
+                characteristics: service.characteristics!.map {
+                    $0.uuid.uuidStr
+                }
+            ),
+            completion: { _ in }
+        )
+
     }
-    
-    public func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
+
+    public func peripheral(
+        _ peripheral: CBPeripheral,
+        didWriteValueFor characteristic: CBCharacteristic,
+        error: Error?
+    ) {
         // TODO(cg): send this as a message
     }
-    
-    public func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
-        self.messageConnector.sendMessage([
-            "deviceId": peripheral.uuid.uuidString,
-            "characteristicValue": [
-                "characteristic": characteristic.uuid.uuidStr,
-                "value": FlutterStandardTypedData(bytes: characteristic.value!)
-            ]
-        ])
+
+    public func peripheral(
+        _ peripheral: CBPeripheral,
+        didUpdateValueFor characteristic: CBCharacteristic,
+        error: Error?
+    ) {
+        if let value = characteristic.value {
+            flutterApi.onCharacteristicValueChanged(
+                valueChanged: PlatformCharacteristicValueChanged(
+                    deviceId: peripheral.uuid.uuidString,
+                    characteristicId: characteristic.uuid.uuidStr,
+                    value: FlutterStandardTypedData(bytes: value)
+                ),
+                completion: { _ in }
+            )
+        }
     }
-    
-    public func peripheral(_ peripheral: CBPeripheral, didOpen channel: CBL2CAPChannel?, error: Error?) {
+
+    public func peripheral(
+        _ peripheral: CBPeripheral,
+        didOpen channel: CBL2CAPChannel?,
+        error: Error?
+    ) {
         guard let channel = channel else {
             return
         }
-        
-        let streamDelegate = L2CapStreamDelegate(channel: channel, openedCallback: {
-            self.messageConnector.sendMessage([
-                "deviceId": peripheral.uuid.uuidString,
-                "l2capStatus": "opened",
-            ])
-        }, streamCallback: {
-            data in
-            self.messageConnector.sendMessage([
-                "deviceId": peripheral.uuid.uuidString,
-                "l2capStatus": "stream",
-                "data": data,
-            ])
-        }, closedCallback: {
-            self.messageConnector.sendMessage([
-                "deviceId": peripheral.uuid.uuidString,
-                "l2capStatus": "closed",
-            ])
-        }, errorCallback: { error in
-            self.messageConnector.sendMessage([
-                "deviceId": peripheral.uuid.uuidString,
-                "l2capStatus": "error",
-                "error": error?.localizedDescription
-            ])
-        })
+
+        let streamDelegate = L2CapStreamDelegate(
+            channel: channel,
+            onOpen: {
+                self.l2CapSocketEventsListener.onEvent(
+                    event: PlatformL2CapSocketEvent(
+                        deviceId: peripheral.uuid.uuidString,
+                        opened: true
+                    )
+                )
+            },
+            onData: {
+                data in
+                self.l2CapSocketEventsListener.onEvent(
+                    event: PlatformL2CapSocketEvent(
+                        deviceId: peripheral.uuid.uuidString,
+                        data: FlutterStandardTypedData(bytes: data)
+                    )
+                )
+            },
+            onClose: {
+                self.l2CapSocketEventsListener.onEvent(
+                    event: PlatformL2CapSocketEvent(
+                        deviceId: peripheral.uuid.uuidString,
+                        closed: true
+                    )
+                )
+            },
+            onError: { error in
+                self.l2CapSocketEventsListener.onEvent(
+                    event: PlatformL2CapSocketEvent(
+                        deviceId: peripheral.uuid.uuidString,
+                        error: error?.localizedDescription
+                    )
+                )
+
+            }
+        )
         streamDelegates[peripheral.uuid.uuidString] = streamDelegate
     }
 }
 
-class L2CapStreamDelegate: NSObject, StreamDelegate {
-    var channel: CBL2CAPChannel?
-    var inputStream: InputStream?
-    var outputStream: OutputStream?
-    
-    var openedCallback: () -> ()?
-    var streamCallback: (Data) -> ()?
-    var closedCallback: () -> ()?
-    var errorCallback: (Error?) -> ()?
-    
-    var streamOpenCount = 0
-    var dataToSend = Data()
-    
-    init(channel: CBL2CAPChannel, openedCallback: @escaping () -> (), streamCallback: @escaping (Data) -> (), closedCallback: @escaping () -> (), errorCallback: @escaping (Error?) -> ()) {
+class L2CapStreamDelegate: NSObject, @preconcurrency StreamDelegate {
+    // MARK: - Properties
+
+    // Streams are non-optional and private for encapsulation.
+    private let inputStream: InputStream
+    private let outputStream: OutputStream
+
+    // Keep a reference to the channel to manage its lifecycle.
+    private var channel: CBL2CAPChannel?
+
+    // Callbacks with clearer, more modern Swift naming.
+    private let onOpen: () -> Void
+    private let onData: (Data) -> Void
+    private let onClose: () -> Void
+    private let onError: (Error?) -> Void
+
+    // MARK: - State
+    private var openStreams = Set<Stream>()
+    private var outgoingData = Data()
+    private var hasNotifiedClose = false
+
+    // MARK: - Performance Optimization
+    // Allocate the read buffer once to avoid repeated memory allocation/deallocation.
+    private let readBuffer: UnsafeMutablePointer<UInt8>
+    private let bufferSize = 8192  // This can be tuned based on the L2CAP PSM's MTU.
+
+    // MARK: - Initialization and Cleanup
+
+    init(
+        channel: CBL2CAPChannel,
+        onOpen: @escaping () -> Void,
+        onData: @escaping (Data) -> Void,
+        onClose: @escaping () -> Void,
+        onError: @escaping (Error?) -> Void
+    ) {
         self.channel = channel
-        self.openedCallback = openedCallback
-        self.streamCallback = streamCallback
-        self.closedCallback = closedCallback
-        self.errorCallback = errorCallback
-        
-        super.init()
-        
         self.inputStream = channel.inputStream
-        self.inputStream!.delegate = self
-        self.inputStream!.schedule(in: .main, forMode: .default)
-        self.inputStream!.open()
-        
         self.outputStream = channel.outputStream
-        self.outputStream!.delegate = self
-        self.outputStream!.schedule(in: .main, forMode: .default)
-        self.outputStream!.open()
+
+        self.onOpen = onOpen
+        self.onData = onData
+        self.onClose = onClose
+        self.onError = onError
+
+        self.readBuffer = .allocate(capacity: bufferSize)
+
+        super.init()
+
+        setupStream(inputStream)
+        setupStream(outputStream)
     }
-    
-    func close() {
-        self.inputStream?.close()
-        self.outputStream?.close()
-        
-        self.inputStream?.remove(from: .main, forMode: .default)
-        self.outputStream?.remove(from: .main, forMode: .default)
-        
-        self.inputStream?.delegate = nil
-        self.outputStream?.delegate = nil
-        
-        self.channel = nil
+
+    deinit {
+        // Ensure the buffer is deallocated when this object is destroyed.
+        readBuffer.deallocate()
+        // The public close() method handles the rest of the cleanup.
     }
-    
-    func checkSend() {
-        while dataToSend.count > 0 {
-            if !outputStream!.hasSpaceAvailable {
-                break;
-            }
-            let n = dataToSend.withUnsafeBytes { outputStream!.write(($0.baseAddress?.assumingMemoryBound(to: UInt8.self))!, maxLength: dataToSend.count) }
-            if n > 0 {
-                dataToSend.removeSubrange(0 ..< n)
-            }
+
+    private func setupStream(_ stream: Stream) {
+        stream.delegate = self
+        // All stream events will be handled on the main thread.
+        stream.schedule(in: .main, forMode: .default)
+        stream.open()
+    }
+
+    // MARK: - Public API
+
+    /// Enqueues data to be sent over the L2CAP channel.
+    public func write(data: Data) {
+        // Ensure this operation is thread-safe by dispatching to the main actor.
+        DispatchQueue.main.async {
+            self.outgoingData.append(data)
+            self.sendData()
         }
     }
-    
-    func write(data: Data) {
-        dataToSend.append(data)
-        checkSend()
+
+    /// Closes the connection and cleans up all resources.
+    public func close() {
+        // This method is now the single entry point for a "clean" shutdown.
+        DispatchQueue.main.async {
+            self.handleClose()
+        }
     }
-    
-    @MainActor
-    func streamOpenCompleted() {
-        self.openedCallback()
-    }
-    
-    @MainActor
-    func streamEndEncountered() {
-        self.closedCallback()
-    }
-    
-    @MainActor
-    func streamRecevied(data: Data) {
-        self.streamCallback(data)
-    }
-    
-    @MainActor
-    func streamHasSpaceAvailable() {
-        self.checkSend()
-    }
-    
+
+    // MARK: - Stream Event Handling
+
     @MainActor
     func stream(_ aStream: Stream, handle eventCode: Stream.Event) {
-        switch (eventCode) {
+        switch eventCode {
         case .openCompleted:
-            self.streamOpenCount += 1
-            if self.streamOpenCount == 2 {
-                self.streamOpenCompleted()
+            openStreams.insert(aStream)
+            // When both streams are open, the channel is ready.
+            if openStreams.count == 2 {
+                onOpen()
             }
         case .hasBytesAvailable:
-            let bufferSize = 8192
-            let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
-            while (self.inputStream!.hasBytesAvailable) {
-                let n = self.inputStream!.read(buffer, maxLength: bufferSize)
-                if n == 0 {
-                    break
-                }
-                let data = Data(bytes: buffer, count: n)
-                self.streamRecevied(data: data)
-            }
-            buffer.deallocate()
+            readAvailableBytes()
+
         case .hasSpaceAvailable:
-            self.streamHasSpaceAvailable()
+            sendData()
+
         case .errorOccurred:
-            self.errorCallback(aStream.streamError)
+            onError(aStream.streamError)
+            // An error is a terminal event; close everything.
+            handleClose()
+
         case .endEncountered:
-            self.streamEndEncountered()
+            // If one stream ends, the channel is no longer usable.
+            handleClose()
+
         default:
-            NSLog("unknown stream event")
+            #if DEBUG
+                print("L2CAP Stream: Unhandled event \(eventCode)")
+            #endif
         }
+    }
+
+    // MARK: - Private Helpers
+
+    @MainActor
+    private func readAvailableBytes() {
+        while inputStream.hasBytesAvailable {
+            let bytesRead = inputStream.read(readBuffer, maxLength: bufferSize)
+
+            if bytesRead > 0 {
+                // Create a Data object by copying the read bytes.
+                let data = Data(bytes: readBuffer, count: bytesRead)
+                onData(data)
+            } else if bytesRead < 0, let error = inputStream.streamError {
+                // Error occurred during read.
+                onError(error)
+                handleClose()
+                break
+            } else {
+                // bytesRead == 0 indicates end of stream.
+                break
+            }
+        }
+    }
+
+    @MainActor
+    private func sendData() {
+        // Ensure there is data to send and space in the output buffer.
+        guard !outgoingData.isEmpty, outputStream.hasSpaceAvailable else {
+            return
+        }
+
+        let bytesWritten = outgoingData.withUnsafeBytes {
+            outputStream.write($0.baseAddress!, maxLength: outgoingData.count)
+        }
+
+        if bytesWritten > 0 {
+            // Efficiently remove the data that was sent.
+            outgoingData.removeFirst(bytesWritten)
+        } else if bytesWritten < 0, let error = outputStream.streamError {
+            // Error occurred during write.
+            onError(error)
+            handleClose()
+        }
+    }
+
+    /// The single, unified method for closing streams and notifying the delegate.
+    @MainActor
+    private func handleClose() {
+        // Ensure cleanup and notification happens only once.
+        guard !hasNotifiedClose else { return }
+        hasNotifiedClose = true
+
+        inputStream.close()
+        outputStream.close()
+
+        inputStream.remove(from: .main, forMode: .default)
+        outputStream.remove(from: .main, forMode: .default)
+
+        inputStream.delegate = nil
+        outputStream.delegate = nil
+
+        // Release the reference to the channel, allowing it to be deallocated.
+        channel = nil
+        outgoingData.removeAll()
+
+        onClose()
+    }
+}
+
+class ScanResultListener: ScanResultsStreamHandler {
+    var eventSink: PigeonEventSink<PlatformScanResult>?
+
+    override func onListen(
+        withArguments arguments: Any?,
+        sink: PigeonEventSink<PlatformScanResult>
+    ) {
+        eventSink = sink
+    }
+
+    func onEvent(event: PlatformScanResult) {
+        if let eventSink = eventSink {
+            eventSink.success(event)
+        }
+    }
+
+    func onEventsDone() {
+        eventSink?.endOfStream()
+        eventSink = nil
+    }
+}
+
+class L2CapSocketEventsListener: L2CapSocketEventsStreamHandler {
+    var eventSink: PigeonEventSink<PlatformL2CapSocketEvent>?
+
+    override func onListen(
+        withArguments arguments: Any?,
+        sink: PigeonEventSink<PlatformL2CapSocketEvent>
+    ) {
+        eventSink = sink
+    }
+
+    func onEvent(event: PlatformL2CapSocketEvent) {
+        if let eventSink = eventSink {
+            eventSink.success(event)
+        }
+    }
+
+    func onEventsDone() {
+        eventSink?.endOfStream()
+        eventSink = nil
     }
 }
