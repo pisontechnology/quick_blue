@@ -19,7 +19,6 @@ class QuickBlueAndroid extends QuickBluePlatform {
     if (_flutterApi != null) return;
     _flutterApi = _FlutterApi(
       onConnectionChangedCallback: (deviceId, state, status) {
-        print('Connection changed: $deviceId, $state, $status');
         onConnectionChanged?.call(deviceId, state, status);
       },
       onServiceDiscoveredCallback: (deviceId, serviceId, characteristicIds) {
@@ -108,7 +107,6 @@ class QuickBlueAndroid extends QuickBluePlatform {
     _ensureInitialized();
 
     await _api.openL2cap(deviceId, psm);
-    print('L2CAP socket opened for device: $deviceId');
 
     return BleL2capSocket(
       sink: _L2capSink(api: _api, deviceId: deviceId),

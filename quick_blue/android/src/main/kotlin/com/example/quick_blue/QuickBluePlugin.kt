@@ -103,7 +103,10 @@ class QuickBluePlugin : FlutterPlugin, PluginRegistry.ActivityResultListener,
             cleanConnection(gatt)
         }
 
-        setUp(binding.binaryMessenger, binding.applicationContext)
+        QuickBlueApi.setUp(binding.binaryMessenger, null)
+        scanResultListener.onEventsDone()
+        mtuChangedListener.onEventsDone()
+        l2CapSocketEventsListener.onEventsDone()
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
