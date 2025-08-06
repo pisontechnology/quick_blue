@@ -260,7 +260,7 @@ public class QuickBlueDarwinPlugin: NSObject, FlutterPlugin, QuickBlueApi {
 
     func openL2cap(
         deviceId: String,
-        psm: Int64,
+        psm: Int64
     ) throws {
         guard let peripheral = discoveredPeripherals[deviceId] else {
             throw
