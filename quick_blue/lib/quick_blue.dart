@@ -42,6 +42,9 @@ class QuickBlue {
     _platform = QuickBluePlatform.instance;
   }
 
+  static Future<void> disconnectAll({required String serviceUuid}) =>
+      _platform.disconnectAll(serviceUuid: serviceUuid);
+
   static Future<bool> isBluetoothAvailable() =>
       _platform.isBluetoothAvailable();
 

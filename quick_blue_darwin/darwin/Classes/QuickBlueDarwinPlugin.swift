@@ -100,6 +100,14 @@ public class QuickBlueDarwinPlugin: NSObject, FlutterPlugin {
     
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
+        case "disconnectAll":
+            let arguments = call.arguments as! Dictionary<String, Any>
+            let filterServiceUuids = arguments["serviceUuids"] as! Array<String>
+            let peripherals = manager.retrieveConnectedPeripherals(withServices: filterServiceUuids.map { uuid in CBUUID(string: uuid) })
+            for peripheral in peripherals {
+                cleanConnection(peripheral)
+            }
+            result(nil)
         case "isBluetoothAvailable":
             result(manager.state == .poweredOn)
         case "startScan":

@@ -23,6 +23,11 @@ class MethodChannelQuickBlue extends QuickBluePlatform {
   }
 
   @override
+  Future<void> disconnectAll({required String serviceUuid}) {
+    return _method.invokeMethod('disconnectAll', {'serviceUuid': serviceUuid});
+  }
+
+  @override
   Future<bool> isBluetoothAvailable() async {
     bool result = await _method.invokeMethod('isBluetoothAvailable');
     return result;

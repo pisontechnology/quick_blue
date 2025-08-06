@@ -138,6 +138,14 @@ class QuickBlueLinux extends QuickBluePlatform {
     // TODO: implement companionDisassociate
     throw UnimplementedError();
   }
+
+  @override
+  Future<void> disconnectAll({
+    required String serviceUuid,
+  }) {
+    // TODO: implement disconnectAll
+    throw UnimplementedError();
+  }
 }
 
 extension BlueZDeviceExtension on BlueZDevice {
