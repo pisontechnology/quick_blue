@@ -163,9 +163,7 @@ abstract class QuickBlueEventApi {
 abstract class QuickBlueFlutterApi {
   void onConnectionStateChange(PlatformConnectionStateChange stateChange);
   void onServiceDiscovered(PlatformServiceDiscovered serviceDiscovered);
-  void onMtuChanged(PlatformMtuChange mtuChange);
   void onCharacteristicValueChanged(
     PlatformCharacteristicValueChanged valueChanged,
   );
-  void onL2CapSocketEvent(PlatformL2CapSocketEvent event);
 }

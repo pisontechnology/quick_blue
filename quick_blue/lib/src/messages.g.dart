@@ -961,11 +961,7 @@ abstract class QuickBlueFlutterApi {
 
   void onServiceDiscovered(PlatformServiceDiscovered serviceDiscovered);
 
-  void onMtuChanged(PlatformMtuChange mtuChange);
-
   void onCharacteristicValueChanged(PlatformCharacteristicValueChanged valueChanged);
-
-  void onL2CapSocketEvent(PlatformL2CapSocketEvent event);
 
   static void setUp(QuickBlueFlutterApi? api, {BinaryMessenger? binaryMessenger, String messageChannelSuffix = '',}) {
     messageChannelSuffix = messageChannelSuffix.isNotEmpty ? '.$messageChannelSuffix' : '';
@@ -1021,31 +1017,6 @@ abstract class QuickBlueFlutterApi {
     }
     {
       final BasicMessageChannel<Object?> pigeonVar_channel = BasicMessageChannel<Object?>(
-          'dev.flutter.pigeon.quick_blue.QuickBlueFlutterApi.onMtuChanged$messageChannelSuffix', pigeonChannelCodec,
-          binaryMessenger: binaryMessenger);
-      if (api == null) {
-        pigeonVar_channel.setMessageHandler(null);
-      } else {
-        pigeonVar_channel.setMessageHandler((Object? message) async {
-          assert(message != null,
-          'Argument for dev.flutter.pigeon.quick_blue.QuickBlueFlutterApi.onMtuChanged was null.');
-          final List<Object?> args = (message as List<Object?>?)!;
-          final PlatformMtuChange? arg_mtuChange = (args[0] as PlatformMtuChange?);
-          assert(arg_mtuChange != null,
-              'Argument for dev.flutter.pigeon.quick_blue.QuickBlueFlutterApi.onMtuChanged was null, expected non-null PlatformMtuChange.');
-          try {
-            api.onMtuChanged(arg_mtuChange!);
-            return wrapResponse(empty: true);
-          } on PlatformException catch (e) {
-            return wrapResponse(error: e);
-          }          catch (e) {
-            return wrapResponse(error: PlatformException(code: 'error', message: e.toString()));
-          }
-        });
-      }
-    }
-    {
-      final BasicMessageChannel<Object?> pigeonVar_channel = BasicMessageChannel<Object?>(
           'dev.flutter.pigeon.quick_blue.QuickBlueFlutterApi.onCharacteristicValueChanged$messageChannelSuffix', pigeonChannelCodec,
           binaryMessenger: binaryMessenger);
       if (api == null) {
@@ -1060,31 +1031,6 @@ abstract class QuickBlueFlutterApi {
               'Argument for dev.flutter.pigeon.quick_blue.QuickBlueFlutterApi.onCharacteristicValueChanged was null, expected non-null PlatformCharacteristicValueChanged.');
           try {
             api.onCharacteristicValueChanged(arg_valueChanged!);
-            return wrapResponse(empty: true);
-          } on PlatformException catch (e) {
-            return wrapResponse(error: e);
-          }          catch (e) {
-            return wrapResponse(error: PlatformException(code: 'error', message: e.toString()));
-          }
-        });
-      }
-    }
-    {
-      final BasicMessageChannel<Object?> pigeonVar_channel = BasicMessageChannel<Object?>(
-          'dev.flutter.pigeon.quick_blue.QuickBlueFlutterApi.onL2CapSocketEvent$messageChannelSuffix', pigeonChannelCodec,
-          binaryMessenger: binaryMessenger);
-      if (api == null) {
-        pigeonVar_channel.setMessageHandler(null);
-      } else {
-        pigeonVar_channel.setMessageHandler((Object? message) async {
-          assert(message != null,
-          'Argument for dev.flutter.pigeon.quick_blue.QuickBlueFlutterApi.onL2CapSocketEvent was null.');
-          final List<Object?> args = (message as List<Object?>?)!;
-          final PlatformL2CapSocketEvent? arg_event = (args[0] as PlatformL2CapSocketEvent?);
-          assert(arg_event != null,
-              'Argument for dev.flutter.pigeon.quick_blue.QuickBlueFlutterApi.onL2CapSocketEvent was null, expected non-null PlatformL2CapSocketEvent.');
-          try {
-            api.onL2CapSocketEvent(arg_event!);
             return wrapResponse(empty: true);
           } on PlatformException catch (e) {
             return wrapResponse(error: e);

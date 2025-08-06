@@ -938,46 +938,12 @@ class QuickBlueFlutterApi(private val binaryMessenger: BinaryMessenger, private 
       } 
     }
   }
-  fun onMtuChanged(mtuChangeArg: PlatformMtuChange, callback: (Result<Unit>) -> Unit)
-{
-    val separatedMessageChannelSuffix = if (messageChannelSuffix.isNotEmpty()) ".$messageChannelSuffix" else ""
-    val channelName = "dev.flutter.pigeon.quick_blue.QuickBlueFlutterApi.onMtuChanged$separatedMessageChannelSuffix"
-    val channel = BasicMessageChannel<Any?>(binaryMessenger, channelName, codec)
-    channel.send(listOf(mtuChangeArg)) {
-      if (it is List<*>) {
-        if (it.size > 1) {
-          callback(Result.failure(FlutterError(it[0] as String, it[1] as String, it[2] as String?)))
-        } else {
-          callback(Result.success(Unit))
-        }
-      } else {
-        callback(Result.failure(MessagesPigeonUtils.createConnectionError(channelName)))
-      } 
-    }
-  }
   fun onCharacteristicValueChanged(valueChangedArg: PlatformCharacteristicValueChanged, callback: (Result<Unit>) -> Unit)
 {
     val separatedMessageChannelSuffix = if (messageChannelSuffix.isNotEmpty()) ".$messageChannelSuffix" else ""
     val channelName = "dev.flutter.pigeon.quick_blue.QuickBlueFlutterApi.onCharacteristicValueChanged$separatedMessageChannelSuffix"
     val channel = BasicMessageChannel<Any?>(binaryMessenger, channelName, codec)
     channel.send(listOf(valueChangedArg)) {
-      if (it is List<*>) {
-        if (it.size > 1) {
-          callback(Result.failure(FlutterError(it[0] as String, it[1] as String, it[2] as String?)))
-        } else {
-          callback(Result.success(Unit))
-        }
-      } else {
-        callback(Result.failure(MessagesPigeonUtils.createConnectionError(channelName)))
-      } 
-    }
-  }
-  fun onL2CapSocketEvent(eventArg: PlatformL2CapSocketEvent, callback: (Result<Unit>) -> Unit)
-{
-    val separatedMessageChannelSuffix = if (messageChannelSuffix.isNotEmpty()) ".$messageChannelSuffix" else ""
-    val channelName = "dev.flutter.pigeon.quick_blue.QuickBlueFlutterApi.onL2CapSocketEvent$separatedMessageChannelSuffix"
-    val channel = BasicMessageChannel<Any?>(binaryMessenger, channelName, codec)
-    channel.send(listOf(eventArg)) {
       if (it is List<*>) {
         if (it.size > 1) {
           callback(Result.failure(FlutterError(it[0] as String, it[1] as String, it[2] as String?)))

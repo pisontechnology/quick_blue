@@ -290,16 +290,6 @@ class _FlutterApi extends messages.QuickBlueFlutterApi {
       serviceDiscovered.characteristics,
     );
   }
-
-  @override
-  void onL2CapSocketEvent(messages.PlatformL2CapSocketEvent event) {
-    // TODO: implement onL2CapSocketEvent
-  }
-
-  @override
-  void onMtuChanged(messages.PlatformMtuChange mtuChange) {
-    // TODO: implement onMtuChanged
-  }
 }
 
 extension _BleInputPropertyExtension on BleInputProperty {
