@@ -1,6 +1,53 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+final _empty = Uint8List.fromList(List.empty());
+
+class BlueScanResult {
+  final String name;
+  final String deviceId;
+  final Uint8List? _manufacturerDataHead;
+  final Uint8List? _manufacturerData;
+  final int rssi;
+  final DateTime advertisedDateTime;
+  final List<String> serviceUuids;
+
+  Uint8List get manufacturerDataHead => _manufacturerDataHead ?? _empty;
+
+  Uint8List get manufacturerData => _manufacturerData ?? manufacturerDataHead;
+
+  BlueScanResult({
+    required this.name,
+    required this.deviceId,
+    Uint8List? manufacturerDataHead,
+    Uint8List? manufacturerData,
+    required this.rssi,
+    DateTime? advertisedDateTime,
+    this.serviceUuids = const [],
+  }) : _manufacturerDataHead = manufacturerDataHead ?? _empty,
+       _manufacturerData = manufacturerData ?? _empty,
+       advertisedDateTime = advertisedDateTime ?? DateTime.now();
+
+  BlueScanResult.fromMap(Map<String, dynamic> map)
+    : name = map['name'],
+      deviceId = map['deviceId'],
+      _manufacturerDataHead = map['manufacturerDataHead'],
+      _manufacturerData = map['manufacturerData'],
+      rssi = map['rssi'],
+      advertisedDateTime = DateTime.now(),
+      serviceUuids = map['serviceUuids']?.cast<String>() ?? <String>[];
+
+  Map<String, dynamic> toMap() => {
+    'name': name,
+    'deviceId': deviceId,
+    'manufacturerDataHead': _manufacturerDataHead,
+    'manufacturerData': _manufacturerData,
+    'rssi': rssi,
+    'advertisedDateTime': advertisedDateTime,
+    'serviceUuids': serviceUuids,
+  };
+}
+
 class ScanFilter {
   const ScanFilter({this.serviceUuids = const [], this.manufacturerData});
 

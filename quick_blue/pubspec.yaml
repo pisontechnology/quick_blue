@@ -20,6 +20,7 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  pigeon: ^25.5.0
 
 dependency_overrides:
   quick_blue_platform_interface:
@@ -46,6 +47,7 @@ flutter:
       android:
         package: com.example.quick_blue
         pluginClass: QuickBluePlugin
+        dartPluginClass: QuickBlueAndroid
       ios:
         default_package: quick_blue_darwin
       macos:

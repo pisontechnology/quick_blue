@@ -3,6 +3,7 @@ library quick_blue_platform_interface;
 import 'dart:typed_data';
 
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
+import 'package:quick_blue_platform_interface/method_channel_quick_blue.dart';
 
 import 'models.dart';
 
@@ -27,7 +28,7 @@ abstract class QuickBluePlatform extends PlatformInterface {
 
   static final Object _token = Object();
 
-  static late QuickBluePlatform _instance;
+  static QuickBluePlatform _instance = MethodChannelQuickBlue();
 
   static QuickBluePlatform get instance => _instance;
 
@@ -42,7 +43,7 @@ abstract class QuickBluePlatform extends PlatformInterface {
 
   Future<void> stopScan();
 
-  Stream<dynamic> get scanResultStream;
+  Stream<BlueScanResult> get scanResultStream;
 
   Future<void> connect(String deviceId);
 

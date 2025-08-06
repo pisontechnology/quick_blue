@@ -41,12 +41,12 @@ class MethodChannelQuickBlue extends QuickBluePlatform {
     return _method.invokeMethod('stopScan');
   }
 
-  Stream<dynamic> _scanResultStream = _event_scanResult.receiveBroadcastStream({
-    'name': 'scanResult',
-  });
+  Stream<BlueScanResult> _scanResultStream = _event_scanResult
+      .receiveBroadcastStream({'name': 'scanResult'})
+      .map((item) => BlueScanResult.fromMap(item));
 
   @override
-  Stream<dynamic> get scanResultStream => _scanResultStream;
+  Stream<BlueScanResult> get scanResultStream => _scanResultStream;
 
   @override
   Future<void> connect(String deviceId) {
