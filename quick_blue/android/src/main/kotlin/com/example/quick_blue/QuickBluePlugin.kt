@@ -165,6 +165,7 @@ class QuickBluePlugin : FlutterPlugin, PluginRegistry.ActivityResultListener,
             streamDelegates.remove(gatt.device.address)
         }
         gatt.disconnect()
+        gatt.close()
     }
 
     private val scanCallback = object : ScanCallback() {
