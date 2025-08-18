@@ -149,6 +149,7 @@ class QuickBluePlugin : FlutterPlugin, PluginRegistry.ActivityResultListener,
     private val executor: Executor = Executor { it.run() }
     private val knownGatts = mutableListOf<BluetoothGatt>()
     private val streamDelegates = mutableMapOf<String, L2CapStreamDelegate>()
+    private val gattLock = Any()
 
 
     private fun connectDevice(bluetoothDevice: BluetoothDevice) {
@@ -158,14 +159,18 @@ class QuickBluePlugin : FlutterPlugin, PluginRegistry.ActivityResultListener,
     }
 
     private fun cleanConnection(gatt: BluetoothGatt) {
-        knownGatts.remove(gatt)
-        val delegate = streamDelegates[gatt.device.address]
-        if (delegate != null) {
-            delegate.close()
-            streamDelegates.remove(gatt.device.address)
+        synchronized(gattLock) {
+            knownGatts.remove(gatt)
+            val delegate = streamDelegates[gatt.device.address]
+            if (delegate != null) {
+                delegate.close()
+                streamDelegates.remove(gatt.device.address)
+            }
+            gatt.disconnect()
+            mainThreadHandler.postDelayed({
+                gatt.close()
+            }, 2000)
         }
-        gatt.disconnect()
-        gatt.close()
     }
 
     private val scanCallback = object : ScanCallback() {
@@ -333,12 +338,14 @@ class QuickBluePlugin : FlutterPlugin, PluginRegistry.ActivityResultListener,
     }
 
     override fun connect(deviceId: String) {
-        if (knownGatts.find { it.device.address == deviceId } != null) {
-            // Already connected
-            return
+        synchronized(gattLock) {
+            if (knownGatts.find { it.device.address == deviceId } != null) {
+                // Already connected
+                return
+            }
+            val remoteDevice = bluetoothManager.adapter.getRemoteDevice(deviceId)
+            connectDevice(remoteDevice)
         }
-        val remoteDevice = bluetoothManager.adapter.getRemoteDevice(deviceId)
-        connectDevice(remoteDevice)
     }
 
     override fun disconnect(deviceId: String) {
