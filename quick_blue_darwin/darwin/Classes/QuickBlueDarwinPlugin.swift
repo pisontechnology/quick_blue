@@ -80,6 +80,8 @@ public class QuickBlueDarwinPlugin: NSObject, FlutterPlugin, QuickBlueApi {
         )
     }
 
+    private let stateQueue = DispatchQueue(label: "quick_blue.state.queue")
+
     private var flutterApi: QuickBlueFlutterApi
     private var scanResultListener: ScanResultListener
     private var l2CapSocketEventsListener: L2CapSocketEventsListener
@@ -134,27 +136,34 @@ public class QuickBlueDarwinPlugin: NSObject, FlutterPlugin, QuickBlueApi {
     }
 
     func connect(deviceId: String) throws {
-        guard let peripheral = discoveredPeripherals[deviceId] else {
-            throw PigeonError(
-                code: "IllegalArgument",
-                message: "Unknown deviceId:\(deviceId)",
-                details: nil
-            )
+        try stateQueue.sync {
+            guard let peripheral = discoveredPeripherals[deviceId] else {
+                throw PigeonError(
+                    code: "IllegalArgument",
+                    message: "Unknown deviceId:\(deviceId)",
+                    details: nil
+                )
+            }
+            // Prevent duplicate connects
+            if peripheral.state == .connected || peripheral.state == .connecting {
+                return
+            }
+            peripheral.delegate = self
+            manager.connect(peripheral)
         }
-
-        peripheral.delegate = self
-        manager.connect(peripheral)
     }
 
     func disconnect(deviceId: String) throws {
-        guard let peripheral = discoveredPeripherals[deviceId] else {
-            throw PigeonError(
-                code: "IllegalArgument",
-                message: "Unknown deviceId:\(deviceId)",
-                details: nil
-            )
+        try stateQueue.sync {
+            guard let peripheral = discoveredPeripherals[deviceId] else {
+                throw PigeonError(
+                    code: "IllegalArgument",
+                    message: "Unknown deviceId:\(deviceId)",
+                    details: nil
+                )
+            }
+            cleanConnection(peripheral)
         }
-        cleanConnection(peripheral)
     }
 
     func discoverServices(deviceId: String) throws {
