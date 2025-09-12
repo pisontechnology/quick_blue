@@ -58,6 +58,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.nio.ByteBuffer
@@ -611,6 +613,9 @@ class L2CapStreamDelegate(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var readJob: Job? = null
 
+    private val writeMutex = Mutex()
+
+
     init {
         // Launch the main connection and reading logic.
         scope.launch {
@@ -666,11 +671,15 @@ class L2CapStreamDelegate(
     }
 
     fun write(data: ByteArray) {
-        if (!scope.isActive) return // Don't write if the scope is already cancelled
+        if (!scope.isActive) return
 
         scope.launch {
             try {
-                socket.outputStream.write(data)
+                // This ensures only one coroutine can be inside this block at a time,
+                // preserving the order of calls to write().
+                writeMutex.withLock {
+                    socket.outputStream.write(data)
+                }
             } catch (e: Exception) {
                 handleError(e)
             }
