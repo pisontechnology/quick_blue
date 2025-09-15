@@ -58,8 +58,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.newSingleThreadContext
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.nio.ByteBuffer
@@ -611,9 +610,10 @@ class L2CapStreamDelegate(
     // SupervisorJob ensures that a failure in one child doesn't cancel the entire scope.
     // Dispatchers.IO is the appropriate thread pool for network I/O.
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val writeDispatcher = newSingleThreadContext("L2CapWriteThread")
+
     private var readJob: Job? = null
 
-    private val writeMutex = Mutex()
 
 
     init {
@@ -673,13 +673,9 @@ class L2CapStreamDelegate(
     fun write(data: ByteArray) {
         if (!scope.isActive) return
 
-        scope.launch {
+        scope.launch(writeDispatcher) {
             try {
-                // This ensures only one coroutine can be inside this block at a time,
-                // preserving the order of calls to write().
-                writeMutex.withLock {
-                    socket.outputStream.write(data)
-                }
+                socket.outputStream.write(data)
             } catch (e: Exception) {
                 handleError(e)
             }
@@ -702,6 +698,7 @@ class L2CapStreamDelegate(
         // Cancels all coroutines started in this scope (including the read loop).
         // It's idempotent; calling it multiple times has no effect.
         scope.cancel()
+        writeDispatcher.close()
 
         try {
             socket.close()
