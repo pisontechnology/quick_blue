@@ -15,11 +15,6 @@ extension CBUUID {
 }
 
 extension CBPeripheral {
-    // FIXME https://forums.developer.apple.com/thread/84375
-    public var uuid: UUID {
-        value(forKey: "identifier") as! NSUUID as UUID
-    }
-
     public func getCharacteristic(_ characteristic: String, of service: String)
         -> CBCharacteristic?
     {
@@ -54,7 +49,7 @@ public class QuickBlueDarwinPlugin: NSObject, FlutterPlugin, QuickBlueApi {
         )
         return peripherals.map { peripherals in
             Peripheral(
-                id: peripherals.uuid.uuidString,
+                id: peripherals.identifier.uuidString,
                 name: peripherals.name ?? ""
             )
         }
@@ -167,14 +162,16 @@ public class QuickBlueDarwinPlugin: NSObject, FlutterPlugin, QuickBlueApi {
     }
 
     func discoverServices(deviceId: String) throws {
-        guard let peripheral = discoveredPeripherals[deviceId] else {
-            throw PigeonError(
-                code: "IllegalArgument",
-                message: "Unknown deviceId:\(deviceId)",
-                details: nil
-            )
+        try stateQueue.sync {
+            guard let peripheral = discoveredPeripherals[deviceId] else {
+                throw PigeonError(
+                    code: "IllegalArgument",
+                    message: "Unknown deviceId:\(deviceId)",
+                    details: nil
+                )
+            }
+            peripheral.discoverServices(nil)
         }
-        peripheral.discoverServices(nil)
     }
 
     func setNotifiable(
@@ -183,55 +180,59 @@ public class QuickBlueDarwinPlugin: NSObject, FlutterPlugin, QuickBlueApi {
         characteristic: String,
         bleInputProperty: PlatformBleInputProperty
     ) throws {
-        guard let peripheral = discoveredPeripherals[deviceId] else {
-            throw PigeonError(
-                code: "IllegalArgument",
-                message: "Unknown deviceId:\(deviceId)",
-                details: nil
-            )
-        }
-        guard
-            let cbCharacteristic = peripheral.getCharacteristic(
-                characteristic,
+        try stateQueue.sync {
+            guard let peripheral = discoveredPeripherals[deviceId] else {
+                throw PigeonError(
+                    code: "IllegalArgument",
+                    message: "Unknown deviceId:\(deviceId)",
+                    details: nil
+                )
+            }
+            guard
+                let cbCharacteristic = peripheral.getCharacteristic(
+                    characteristic,
+                    of: service
+                )
+            else {
+                throw PigeonError(
+                    code: "IllegalArgument",
+                    message: "Unknown characteristic:\(characteristic)",
+                    details: nil
+                )
+            }
+            peripheral.setNotifiable(
+                bleInputProperty,
+                for: characteristic,
                 of: service
             )
-        else {
-            throw PigeonError(
-                code: "IllegalArgument",
-                message: "Unknown characteristic:\(characteristic)",
-                details: nil
-            )
         }
-        peripheral.setNotifiable(
-            bleInputProperty,
-            for: characteristic,
-            of: service
-        )
     }
 
     func readValue(deviceId: String, service: String, characteristic: String)
         throws
     {
-        guard let peripheral = discoveredPeripherals[deviceId] else {
-            throw PigeonError(
-                code: "IllegalArgument",
-                message: "Unknown deviceId:\(deviceId)",
-                details: nil
-            )
+        try stateQueue.sync {
+            guard let peripheral = discoveredPeripherals[deviceId] else {
+                throw PigeonError(
+                    code: "IllegalArgument",
+                    message: "Unknown deviceId:\(deviceId)",
+                    details: nil
+                )
+            }
+            guard
+                let cbCharacteristic = peripheral.getCharacteristic(
+                    characteristic,
+                    of: service
+                )
+            else {
+                throw PigeonError(
+                    code: "IllegalArgument",
+                    message: "Unknown characteristic:\(characteristic)",
+                    details: nil
+                )
+            }
+            peripheral.readValue(for: cbCharacteristic)
         }
-        guard
-            let cbCharacteristic = peripheral.getCharacteristic(
-                characteristic,
-                of: service
-            )
-        else {
-            throw PigeonError(
-                code: "IllegalArgument",
-                message: "Unknown characteristic:\(characteristic)",
-                details: nil
-            )
-        }
-        peripheral.readValue(for: cbCharacteristic)
     }
 
     func writeValue(
@@ -241,68 +242,76 @@ public class QuickBlueDarwinPlugin: NSObject, FlutterPlugin, QuickBlueApi {
         value: FlutterStandardTypedData,
         bleOutputProperty: PlatformBleOutputProperty
     ) throws {
-        guard let peripheral = discoveredPeripherals[deviceId] else {
-            throw PigeonError(
-                code: "IllegalArgument",
-                message: "Unknown deviceId:\(deviceId)",
-                details: nil
-            )
+        try stateQueue.sync {
+            guard let peripheral = discoveredPeripherals[deviceId] else {
+                throw PigeonError(
+                    code: "IllegalArgument",
+                    message: "Unknown deviceId:\(deviceId)",
+                    details: nil
+                )
+            }
+            guard
+                let cbCharacteristic = peripheral.getCharacteristic(
+                    characteristic,
+                    of: service
+                )
+            else {
+                throw PigeonError(
+                    code: "IllegalArgument",
+                    message: "Unknown characteristic:\(characteristic)",
+                    details: nil
+                )
+            }
+            let type =
+                bleOutputProperty == PlatformBleOutputProperty.withoutResponse
+                ? CBCharacteristicWriteType.withoutResponse
+                : CBCharacteristicWriteType.withResponse
+            peripheral.writeValue(value.data, for: cbCharacteristic, type: type)
         }
-        guard
-            let cbCharacteristic = peripheral.getCharacteristic(
-                characteristic,
-                of: service
-            )
-        else {
-            throw PigeonError(
-                code: "IllegalArgument",
-                message: "Unknown characteristic:\(characteristic)",
-                details: nil
-            )
-        }
-        let type =
-            bleOutputProperty == PlatformBleOutputProperty.withoutResponse
-            ? CBCharacteristicWriteType.withoutResponse
-            : CBCharacteristicWriteType.withResponse
-        peripheral.writeValue(value.data, for: cbCharacteristic, type: type)
     }
 
     func openL2cap(
         deviceId: String,
         psm: Int64
     ) throws {
-        guard let peripheral = discoveredPeripherals[deviceId] else {
-            throw
-                PigeonError(
-                    code: "IllegalArgument",
-                    message: "Unknown deviceId:\(deviceId)",
-                    details: nil
-                )
+        try stateQueue.sync {
+            guard let peripheral = discoveredPeripherals[deviceId] else {
+                throw
+                    PigeonError(
+                        code: "IllegalArgument",
+                        message: "Unknown deviceId:\(deviceId)",
+                        details: nil
+                    )
+            }
+            peripheral.openL2CAPChannel(CBL2CAPPSM(psm))
         }
-        peripheral.openL2CAPChannel(CBL2CAPPSM(psm))
     }
 
     func closeL2cap(deviceId: String) throws {
-        guard let streamDelegate = streamDelegates[deviceId] else {
-            throw PigeonError(
-                code: "IllegalArgument",
-                message: "No stream delegate for deviceId:\(deviceId)",
-                details: nil
-            )
+        try stateQueue.sync {
+            guard let streamDelegate = streamDelegates[deviceId] else {
+                throw PigeonError(
+                    code: "IllegalArgument",
+                    message: "No stream delegate for deviceId:\(deviceId)",
+                    details: nil
+                )
+            }
+            streamDelegate.close()
+            streamDelegates.removeValue(forKey: deviceId)
         }
-        streamDelegate.close()
-        streamDelegates.removeValue(forKey: deviceId)
     }
 
     func writeL2cap(deviceId: String, value: FlutterStandardTypedData) throws {
-        guard let streamDelegate = streamDelegates[deviceId] else {
-            throw PigeonError(
-                code: "IllegalArgument",
-                message: "No stream delegate for deviceId:\(deviceId)",
-                details: nil
-            )
+        try stateQueue.sync {
+            guard let streamDelegate = streamDelegates[deviceId] else {
+                throw PigeonError(
+                    code: "IllegalArgument",
+                    message: "No stream delegate for deviceId:\(deviceId)",
+                    details: nil
+                )
+            }
+            streamDelegate.write(data: value.data)
         }
-        streamDelegate.write(data: value.data)
     }
 
     public func detachFromEngine(for registrar: FlutterPluginRegistrar) {
@@ -310,15 +319,17 @@ public class QuickBlueDarwinPlugin: NSObject, FlutterPlugin, QuickBlueApi {
         manager.stopScan()
 
         // Disconnect all active devices
-        for (_, peripheral) in discoveredPeripherals {
-            cleanConnection(peripheral)
+        try stateQueue.sync {
+            for (_, peripheral) in discoveredPeripherals {
+                cleanConnection(peripheral)
+            }
         }
     }
 
     private func cleanConnection(_ peripheral: CBPeripheral) {
-        if let delegate = streamDelegates[peripheral.uuid.uuidString] {
+        if let delegate = streamDelegates[peripheral.identifier.uuidString] {
             delegate.close()
-            streamDelegates.removeValue(forKey: peripheral.uuid.uuidString)
+            streamDelegates.removeValue(forKey: peripheral.identifier.uuidString)
         }
         manager.cancelPeripheralConnection(peripheral)
     }
@@ -334,43 +345,45 @@ extension QuickBlueDarwinPlugin: CBCentralManagerDelegate {
         advertisementData: [String: Any],
         rssi RSSI: NSNumber
     ) {
-        discoveredPeripherals[peripheral.uuid.uuidString] = peripheral
+        try stateQueue.sync {
+            discoveredPeripherals[peripheral.identifier.uuidString] = peripheral
 
-        let manufacturerData =
-            advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data
-        let serviceUuids =
-            advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]
-            ?? []
-        if targetManufacturerData != nil {
-            if targetManufacturerData == manufacturerData {
+            let manufacturerData =
+                advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data
+            let serviceUuids =
+                advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]
+                ?? []
+            if targetManufacturerData != nil {
+                if targetManufacturerData == manufacturerData {
+                    scanResultListener.onEvent(
+                        event: PlatformScanResult(
+                            name: peripheral.name ?? "",
+                            deviceId: peripheral.identifier.uuidString,
+                            manufacturerDataHead: FlutterStandardTypedData(
+                                bytes: manufacturerData ?? Data()
+                            ),
+                            manufacturerData: FlutterStandardTypedData(
+                                bytes: Data()
+                            ),
+                            rssi: Int64(truncating: RSSI),
+                            serviceUuids: serviceUuids.map { $0.uuidString }
+                        )
+                    )
+                }
+            } else {
                 scanResultListener.onEvent(
                     event: PlatformScanResult(
                         name: peripheral.name ?? "",
-                        deviceId: peripheral.uuid.uuidString,
+                        deviceId: peripheral.identifier.uuidString,
                         manufacturerDataHead: FlutterStandardTypedData(
-                            bytes: manufacturerData ?? Data()
-                        ),
-                        manufacturerData: FlutterStandardTypedData(
                             bytes: Data()
                         ),
+                        manufacturerData: FlutterStandardTypedData(bytes: Data()),
                         rssi: Int64(truncating: RSSI),
                         serviceUuids: serviceUuids.map { $0.uuidString }
                     )
                 )
             }
-        } else {
-            scanResultListener.onEvent(
-                event: PlatformScanResult(
-                    name: peripheral.name ?? "",
-                    deviceId: peripheral.uuid.uuidString,
-                    manufacturerDataHead: FlutterStandardTypedData(
-                        bytes: Data()
-                    ),
-                    manufacturerData: FlutterStandardTypedData(bytes: Data()),
-                    rssi: Int64(truncating: RSSI),
-                    serviceUuids: serviceUuids.map { $0.uuidString }
-                )
-            )
         }
     }
 
@@ -380,7 +393,7 @@ extension QuickBlueDarwinPlugin: CBCentralManagerDelegate {
     ) {
         flutterApi.onConnectionStateChange(
             stateChange: PlatformConnectionStateChange(
-                deviceId: peripheral.uuid.uuidString,
+                deviceId: peripheral.identifier.uuidString,
                 state: PlatformConnectionState.connected,
                 gattStatus: PlatformGattStatus.success
             ),
@@ -394,22 +407,24 @@ extension QuickBlueDarwinPlugin: CBCentralManagerDelegate {
         didDisconnectPeripheral peripheral: CBPeripheral,
         error: Error?
     ) {
-        if let error = error {
-            central.cancelPeripheralConnection(peripheral)
-            if let streamDelegate = streamDelegates[peripheral.uuid.uuidString]
-            {
-                streamDelegate.close()
+        try stateQueue.sync {
+            if let error = error {
+                central.cancelPeripheralConnection(peripheral)
+                if let streamDelegate = streamDelegates[peripheral.identifier.uuidString]
+                {
+                    streamDelegate.close()
+                }
             }
+            flutterApi.onConnectionStateChange(
+                stateChange: PlatformConnectionStateChange(
+                    deviceId: peripheral.identifier.uuidString,
+                    state: PlatformConnectionState.disconnected,
+                    gattStatus: error == nil
+                        ? PlatformGattStatus.success : PlatformGattStatus.failure
+                ),
+                completion: { _ in }
+            )
         }
-        flutterApi.onConnectionStateChange(
-            stateChange: PlatformConnectionStateChange(
-                deviceId: peripheral.uuid.uuidString,
-                state: PlatformConnectionState.disconnected,
-                gattStatus: error == nil
-                    ? PlatformGattStatus.success : PlatformGattStatus.failure
-            ),
-            completion: { _ in }
-        )
     }
 }
 
@@ -430,7 +445,7 @@ extension QuickBlueDarwinPlugin: CBPeripheralDelegate {
     ) {
         flutterApi.onServiceDiscovered(
             serviceDiscovered: PlatformServiceDiscovered(
-                deviceId: peripheral.uuid.uuidString,
+                deviceId: peripheral.identifier.uuidString,
                 serviceUuid: service.uuid.uuidStr,
                 characteristics: service.characteristics!.map {
                     $0.uuid.uuidStr
@@ -457,7 +472,7 @@ extension QuickBlueDarwinPlugin: CBPeripheralDelegate {
         if let value = characteristic.value {
             flutterApi.onCharacteristicValueChanged(
                 valueChanged: PlatformCharacteristicValueChanged(
-                    deviceId: peripheral.uuid.uuidString,
+                    deviceId: peripheral.identifier.uuidString,
                     characteristicId: characteristic.uuid.uuidStr,
                     value: FlutterStandardTypedData(bytes: value)
                 ),
@@ -471,48 +486,50 @@ extension QuickBlueDarwinPlugin: CBPeripheralDelegate {
         didOpen channel: CBL2CAPChannel?,
         error: Error?
     ) {
-        guard let channel = channel else {
-            return
-        }
-
-        let streamDelegate = L2CapStreamDelegate(
-            channel: channel,
-            onOpen: {
-                self.l2CapSocketEventsListener.onEvent(
-                    event: PlatformL2CapSocketEvent(
-                        deviceId: peripheral.uuid.uuidString,
-                        opened: true
-                    )
-                )
-            },
-            onData: {
-                data in
-                self.l2CapSocketEventsListener.onEvent(
-                    event: PlatformL2CapSocketEvent(
-                        deviceId: peripheral.uuid.uuidString,
-                        data: FlutterStandardTypedData(bytes: data)
-                    )
-                )
-            },
-            onClose: {
-                self.l2CapSocketEventsListener.onEvent(
-                    event: PlatformL2CapSocketEvent(
-                        deviceId: peripheral.uuid.uuidString,
-                        closed: true
-                    )
-                )
-            },
-            onError: { error in
-                self.l2CapSocketEventsListener.onEvent(
-                    event: PlatformL2CapSocketEvent(
-                        deviceId: peripheral.uuid.uuidString,
-                        error: error?.localizedDescription
-                    )
-                )
-
+        try stateQueue.sync {
+            guard let channel = channel else {
+                return
             }
-        )
-        streamDelegates[peripheral.uuid.uuidString] = streamDelegate
+
+            let streamDelegate = L2CapStreamDelegate(
+                channel: channel,
+                onOpen: {
+                    self.l2CapSocketEventsListener.onEvent(
+                        event: PlatformL2CapSocketEvent(
+                            deviceId: peripheral.identifier.uuidString,
+                            opened: true
+                        )
+                    )
+                },
+                onData: {
+                    data in
+                    self.l2CapSocketEventsListener.onEvent(
+                        event: PlatformL2CapSocketEvent(
+                            deviceId: peripheral.identifier.uuidString,
+                            data: FlutterStandardTypedData(bytes: data)
+                        )
+                    )
+                },
+                onClose: {
+                    self.l2CapSocketEventsListener.onEvent(
+                        event: PlatformL2CapSocketEvent(
+                            deviceId: peripheral.identifier.uuidString,
+                            closed: true
+                        )
+                    )
+                },
+                onError: { error in
+                    self.l2CapSocketEventsListener.onEvent(
+                        event: PlatformL2CapSocketEvent(
+                            deviceId: peripheral.identifier.uuidString,
+                            error: error?.localizedDescription
+                        )
+                    )
+
+                }
+            )
+            streamDelegates[peripheral.identifier.uuidString] = streamDelegate
+        }
     }
 }
 
