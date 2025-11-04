@@ -102,8 +102,14 @@ class QuickBluePlugin : FlutterPlugin, PluginRegistry.ActivityResultListener,
         bluetoothManager.adapter.bluetoothLeScanner?.stopScan(scanCallback)
 
         // Disconnect all active devices (call toList to avoid ConcurrentModificationException)
-        knownGatts.toList().forEach { gatt ->
-            cleanConnection(gatt)
+        synchronized(gattLock) {
+            knownGatts.toList().forEach { gatt ->
+                streamDelegates[gatt.device.address]?.close()
+                gatt.disconnect()
+                gatt.close() // Call close() immediately. We are shutting down.
+            }
+            knownGatts.clear()
+            streamDelegates.clear()
         }
 
         QuickBlueApi.setUp(binding.binaryMessenger, null)
@@ -170,9 +176,6 @@ class QuickBluePlugin : FlutterPlugin, PluginRegistry.ActivityResultListener,
                 streamDelegates.remove(gatt.device.address)
             }
             gatt.disconnect()
-            mainThreadHandler.postDelayed({
-                gatt.close()
-            }, 2000)
         }
     }
 
@@ -213,11 +216,6 @@ class QuickBluePlugin : FlutterPlugin, PluginRegistry.ActivityResultListener,
                 else -> PlatformConnectionState.UNKNOWN
             }
 
-            // Clear out the connection if something bad happened.
-            if (newState == BluetoothGatt.STATE_DISCONNECTED || status != BluetoothGatt.GATT_SUCCESS) {
-                cleanConnection(gatt)
-            }
-
             mainThreadHandler.post {
                 quickBlueFlutterApi?.onConnectionStateChange(
                     PlatformConnectionStateChange(
@@ -228,10 +226,16 @@ class QuickBluePlugin : FlutterPlugin, PluginRegistry.ActivityResultListener,
                 ) {}
             }
 
-
             // If we've disconnected, ensure that we also close out the gatt.
             if (newState == BluetoothGatt.STATE_DISCONNECTED) {
-                gatt.close()
+                mainThreadHandler.post {
+                    synchronized(gattLock) {
+                        knownGatts.remove(gatt)
+                        streamDelegates[gatt.device.address]?.close()
+                        streamDelegates.remove(gatt.device.address)
+                    }
+                    gatt.close()
+                }
             }
         }
 
