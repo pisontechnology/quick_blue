@@ -372,13 +372,15 @@ class QuickBluePlugin : FlutterPlugin, PluginRegistry.ActivityResultListener,
     }
 
     override fun connect(deviceId: String) {
-        synchronized(gattLock) {
-            if (knownGatts.find { it.device.address == deviceId } != null) {
-                // Already connected
-                return
+        executor.execute {
+            synchronized(gattLock) {
+                if (knownGatts.find { it.device.address == deviceId } != null) {
+                    // Already connected
+                    return@execute
+                }
+                val remoteDevice = bluetoothManager.adapter.getRemoteDevice(deviceId)
+                connectDevice(remoteDevice)
             }
-            val remoteDevice = bluetoothManager.adapter.getRemoteDevice(deviceId)
-            connectDevice(remoteDevice)
         }
     }
 
