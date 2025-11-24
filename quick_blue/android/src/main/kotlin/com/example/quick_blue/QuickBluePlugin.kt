@@ -101,14 +101,23 @@ class QuickBluePlugin : FlutterPlugin, PluginRegistry.ActivityResultListener,
         Log.d("QuickBluePlugin", "onDetachedFromEngine")
         bluetoothManager.adapter.bluetoothLeScanner?.stopScan(scanCallback)
 
-        // Disconnect all active devices (call toList to avoid ConcurrentModificationException)
+        val gattsToClose = mutableListOf<BluetoothGatt>()
         synchronized(gattLock) {
-            knownGatts.toList().forEach { gatt ->
-                streamDelegates[gatt.device.address]?.close()
-                gatt.disconnect()
-                gatt.close() // Call close() immediately. We are shutting down.
-            }
+            gattsToClose.addAll(knownGatts)
             knownGatts.clear()
+        }
+
+        executor.execute {
+            gattsToClose.forEach { gatt ->
+                try {
+                    streamDelegates[gatt.device.address]?.close()
+                    gatt.disconnect()
+                    gatt.close()
+                    Log.d("QuickBluePlugin", "Closed GATT for ${gatt.device.address}")
+                } catch (e: Exception) {
+                    Log.e("QuickBluePlugin", "Error closing GATT", e)
+                }
+            }
             streamDelegates.clear()
         }
 
