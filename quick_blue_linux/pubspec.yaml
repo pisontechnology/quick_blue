@@ -5,20 +5,22 @@ homepage: https://github.com/woodemi/quick_blue
 repository: https://github.com/woodemi/quick_blue/tree/master/quick_blue_linux
 
 environment:
-  sdk: ">=2.13.0 <3.0.0"
-  flutter: ">=2.2.0"
+  sdk: "^3.7.0"
+  flutter: "3.29.0"
 
 dependencies:
   flutter:
     sdk: flutter
   quick_blue_platform_interface: ^0.4.0-dev.0
-  bluez: ^0.7.9
+  bluez: ^0.8.3
   collection: ^1.15.0
   logging: ^1.0.2
+  ffi: ^2.1.3
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  ffigen: ^20.1.1
 
 dependency_overrides:
   quick_blue_platform_interface:

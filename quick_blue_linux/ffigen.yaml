@@ -1,0 +1,42 @@
+name: bluez_bindings
+description: Bindings for BlueZ L2CAP support in quick_blue_linux.
+output: lib/generated_bindings.dart
+headers:
+  entry-points:
+    - 'headers/bluez_l2cap.h'
+compiler-opts:
+  - '-I/usr/lib/clang/21/include'
+  - '-I/usr/include'
+  - '-I/usr/include/x86_64-linux-gnu'
+exclude-all-by-default: true
+functions:
+  include:
+    - '^str2ba$'
+    - '^socket$'
+    - '^connect$'
+    - '^close$'
+    - '^recv$'
+    - '^send$'
+    - '^setsockopt$'
+    - '^fcntl$'
+structs:
+  include:
+    - sockaddr_l2
+    - bt_security
+    - bdaddr_t
+macros:
+  include:
+    - AF_BLUETOOTH
+    - SOCK_SEQPACKET
+    - BTPROTO_L2CAP
+    - SOL_BLUETOOTH
+    - BT_SECURITY
+    - BT_SECURITY_LOW
+    - BT_SECURITY_MEDIUM
+    - BT_SECURITY_HIGH
+    - BDADDR_LE_PUBLIC
+    - BDADDR_LE_RANDOM
+    - MSG_DONTWAIT
+    - F_GETFL
+    - F_SETFL
+    - O_NONBLOCK
