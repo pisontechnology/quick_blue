@@ -65,6 +65,39 @@ class bluez_bindings {
   late final _recv =
       _recvPtr.asFunction<int Function(int, ffi.Pointer<ffi.Void>, int, int)>();
 
+  int getsockopt(
+    int __fd,
+    int __level,
+    int __optname,
+    ffi.Pointer<ffi.Void> __optval,
+    ffi.Pointer<ffi.UnsignedInt> __optlen,
+  ) {
+    return _getsockopt(__fd, __level, __optname, __optval, __optlen);
+  }
+
+  late final _getsockoptPtr = _lookup<
+    ffi.NativeFunction<
+      ffi.Int Function(
+        ffi.Int,
+        ffi.Int,
+        ffi.Int,
+        ffi.Pointer<ffi.Void>,
+        ffi.Pointer<ffi.UnsignedInt>,
+      )
+    >
+  >('getsockopt');
+  late final _getsockopt =
+      _getsockoptPtr
+          .asFunction<
+            int Function(
+              int,
+              int,
+              int,
+              ffi.Pointer<ffi.Void>,
+              ffi.Pointer<ffi.UnsignedInt>,
+            )
+          >();
+
   int setsockopt(
     int __fd,
     int __level,
@@ -163,6 +196,29 @@ final class sockaddr_l2 extends ffi.Struct {
   external int l2_bdaddr_type;
 }
 
+final class l2cap_options extends ffi.Struct {
+  @ffi.Uint16()
+  external int omtu;
+
+  @ffi.Uint16()
+  external int imtu;
+
+  @ffi.Uint16()
+  external int flush_to;
+
+  @ffi.Uint8()
+  external int mode;
+
+  @ffi.Uint8()
+  external int fcs;
+
+  @ffi.Uint8()
+  external int max_tx;
+
+  @ffi.Uint16()
+  external int txwin_size;
+}
+
 const int SOCK_SEQPACKET = 5;
 
 const int AF_BLUETOOTH = 31;
@@ -172,6 +228,8 @@ const int SOL_BLUETOOTH = 274;
 const int MSG_DONTWAIT = 64;
 
 const int BTPROTO_L2CAP = 0;
+
+const int SOL_L2CAP = 6;
 
 const int BT_SECURITY = 4;
 
@@ -184,6 +242,8 @@ const int BT_SECURITY_HIGH = 3;
 const int BDADDR_LE_PUBLIC = 1;
 
 const int BDADDR_LE_RANDOM = 2;
+
+const int L2CAP_OPTIONS = 1;
 
 const int O_NONBLOCK = 2048;
 

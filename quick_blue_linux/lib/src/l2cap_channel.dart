@@ -19,8 +19,10 @@ class L2capChannel {
     required this.libc,
     required this.bluetooth,
     required Logger logger,
-    this.maxPacketLength = 512,
-  }) : _logger = logger;
+    this.maxPacketLength = 65535,
+  }) : _logger = logger,
+       _receiveCapacity = maxPacketLength,
+       _mtuRefreshPending = true;
 
   static const int _pollIntervalMs = 20;
   static const int _eagain = 11;
@@ -44,6 +46,10 @@ class L2capChannel {
   bool _isWriting = false;
   int? _fd;
   ffi.Pointer<ffi.Uint8>? _readBuffer;
+  int _receiveCapacity;
+  int? _peerReceiveMtu;
+  int? _peerTransmitMtu;
+  bool _mtuRefreshPending;
   Timer? _pollTimer;
   late final StreamController<BleL2CapSocketEvent> _eventController =
       StreamController<BleL2CapSocketEvent>.broadcast();
@@ -53,11 +59,13 @@ class L2capChannel {
   final Queue<_PendingFrame> _pendingWrites = Queue<_PendingFrame>();
 
   Future<BleL2capSocket> open() async {
-    _readBuffer = calloc<ffi.Uint8>(maxPacketLength);
+    _ensureReadBuffer(maxPacketLength);
     try {
       _fd = _createSocket();
       _configureSecurity(_fd!);
+      _configureChannelOptions(_fd!);
       _connectSocket(_fd!);
+      _refreshMtu(_fd!);
       _configureNonBlocking(_fd!);
     } on Object catch (error, stackTrace) {
       _logger.severe(
@@ -95,6 +103,35 @@ class L2capChannel {
       sink: _L2capSink(_outgoingController.sink, _close),
       stream: _eventController.stream,
     );
+  }
+
+  void _configureChannelOptions(int fd) {
+    final opts = calloc<l2cap_options>();
+    try {
+      final desiredMtu = maxPacketLength.clamp(64, 65535).toInt();
+      opts.ref
+        ..omtu = desiredMtu
+        ..imtu = desiredMtu
+        ..flush_to = 0
+        ..mode = 0
+        ..fcs = 0
+        ..max_tx = 0
+        ..txwin_size = 0;
+
+      final result = libc.setsockopt(
+        fd,
+        SOL_L2CAP,
+        L2CAP_OPTIONS,
+        opts.cast(),
+        ffi.sizeOf<l2cap_options>(),
+      );
+      if (result != 0) {
+        final err = libc.errno;
+        _logger.fine('setsockopt(L2CAP_OPTIONS) failed with errno $err');
+      }
+    } finally {
+      calloc.free(opts);
+    }
   }
 
   int _createSocket() {
@@ -203,12 +240,69 @@ class L2capChannel {
     }
   }
 
+  void _refreshMtu(int fd) {
+    final optPtr = calloc<l2cap_options>();
+    final optLenPtr = calloc<ffi.UnsignedInt>();
+    try {
+      optLenPtr.value = ffi.sizeOf<l2cap_options>();
+      final result = libc.getsockopt(
+        fd,
+        SOL_L2CAP,
+        L2CAP_OPTIONS,
+        optPtr.cast(),
+        optLenPtr,
+      );
+      if (result != 0) {
+        final err = libc.errno;
+        _logger.fine('getsockopt(L2CAP_OPTIONS) failed with errno $err');
+        _mtuRefreshPending = true;
+        return;
+      }
+
+      var imtu = optPtr.ref.imtu;
+      if (imtu <= 0) {
+        _mtuRefreshPending = true;
+        return;
+      }
+      if (imtu > 0xFFFF) {
+        imtu = 0xFFFF;
+      }
+      if (imtu > _receiveCapacity) {
+        _ensureReadBuffer(imtu);
+        _logger.fine('Resized L2CAP read buffer for $deviceId to $imtu bytes');
+      }
+      _peerReceiveMtu = imtu;
+
+      final rawOmtu = optPtr.ref.omtu;
+      if (rawOmtu > 0) {
+        _peerTransmitMtu = rawOmtu > 0xFFFF ? 0xFFFF : rawOmtu;
+      } else {
+        _peerTransmitMtu = null;
+      }
+      _mtuRefreshPending = false;
+    } on Object catch (error, stackTrace) {
+      _logger.fine(
+        'Unable to query L2CAP MTU for $deviceId',
+        error,
+        stackTrace,
+      );
+      _mtuRefreshPending = true;
+    } finally {
+      calloc
+        ..free(optLenPtr)
+        ..free(optPtr);
+    }
+  }
+
   void _pollReadable(Timer timer) {
     if (_closed || _fd == null) {
       timer.cancel();
       return;
     }
     final fd = _fd!;
+    if (_mtuRefreshPending) {
+      _refreshMtu(fd);
+    }
     final bufferPtr = _readBuffer?.cast<ffi.Void>();
     if (bufferPtr == null) {
       timer.cancel();
@@ -217,13 +311,21 @@ class L2capChannel {
     }
 
     while (!_closed) {
-      final received = libc.recv(fd, bufferPtr, maxPacketLength, MSG_DONTWAIT);
+      final received = libc.recv(fd, bufferPtr, _receiveCapacity, MSG_DONTWAIT);
       if (received > 0) {
         final data = Uint8List(received);
         data.setAll(0, _readBuffer!.asTypedList(received));
         _eventController.add(
           BleL2CapSocketEventData(deviceId: deviceId, data: data),
         );
+        if (_peerReceiveMtu != null && received > _peerReceiveMtu!) {
+          _logger.warning(
+            'Received $received bytes from $deviceId exceeding negotiated MTU ${_peerReceiveMtu!}, data may be truncated',
+          );
+        }
+        if (_mtuRefreshPending && received == _receiveCapacity) {
+          _refreshMtu(fd);
+        }
         continue;
       }
       if (received == 0) {
@@ -293,28 +395,41 @@ class L2capChannel {
       while (offset < frame.data.length) {
         final chunkPtr = ptr.elementAt(offset).cast<ffi.Void>();
         final remaining = frame.data.length - offset;
-        final written = libc.send(_fd!, chunkPtr, remaining, 0);
-        if (written > 0) {
-          offset += written;
-          continue;
+        final chunkLimit = _peerTransmitMtu;
+        final chunkLength =
+            (chunkLimit != null && chunkLimit > 0 && remaining > chunkLimit)
+                ? chunkLimit
+                : remaining;
+        while (true) {
+          final written = libc.send(_fd!, chunkPtr, chunkLength, 0);
+          if (written > 0) {
+            offset += written;
+            break;
+          }
+          if (written == 0) {
+            frame.offset = offset;
+            return false;
+          }
+          final err = libc.errno;
+          if (err == _eagain || err == _ewouldblock) {
+            frame.offset = offset;
+            return false;
+          }
+          if (err == _eintr) {
+            continue;
+          }
+          if (err == _epipe || err == _econnreset || err == _eshutdown) {
+            _close(errorMessage: 'send errno $err');
+            return true;
+          }
+          if (err == _einval && offset == 0) {
+            _logger.fine(
+              'send returned EINVAL on first chunk for $deviceId, retrying',
+            );
+            continue;
+          }
+          throw OSError('send', err);
         }
-        if (written == 0) {
-          frame.offset = offset;
-          return false;
-        }
-        final err = libc.errno;
-        if (err == _eagain || err == _ewouldblock) {
-          frame.offset = offset;
-          return false;
-        }
-        if (err == _eintr) {
-          continue;
-        }
-        if (err == _epipe || err == _econnreset || err == _eshutdown) {
-          _close(errorMessage: 'send errno $err');
-          return true;
-        }
-        throw OSError('send', err);
       }
 
       frame.offset = offset;
@@ -353,7 +468,11 @@ class L2capChannel {
     if (_readBuffer != null) {
       calloc.free(_readBuffer!);
       _readBuffer = null;
+      _receiveCapacity = maxPacketLength;
     }
+    _peerReceiveMtu = null;
+    _peerTransmitMtu = null;
+    _mtuRefreshPending = true;
   }
 
   void _copyBdaddr(sockaddr_l2 dest, bdaddr_t src) {
@@ -362,6 +481,17 @@ class L2capChannel {
     for (var i = 0; i < 6; i++) {
       destBytes[i] = srcBytes[i];
     }
+  }
+
+  void _ensureReadBuffer(int capacity) {
+    if (_readBuffer != null && capacity <= _receiveCapacity) {
+      return;
+    }
+    if (_readBuffer != null) {
+      calloc.free(_readBuffer!);
+    }
+    _readBuffer = calloc<ffi.Uint8>(capacity);
+    _receiveCapacity = capacity;
   }
 
   int _hostToBluetoothShort(int value) {

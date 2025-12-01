@@ -19,17 +19,20 @@ functions:
     - '^send$'
     - '^setsockopt$'
     - '^fcntl$'
+    - '^getsockopt$'
 structs:
   include:
     - sockaddr_l2
     - bt_security
     - bdaddr_t
+    - l2cap_options
 macros:
   include:
     - AF_BLUETOOTH
     - SOCK_SEQPACKET
     - BTPROTO_L2CAP
     - SOL_BLUETOOTH
+    - SOL_L2CAP
     - BT_SECURITY
     - BT_SECURITY_LOW
     - BT_SECURITY_MEDIUM
@@ -40,3 +43,4 @@ macros:
     - F_GETFL
     - F_SETFL
     - O_NONBLOCK
+    - L2CAP_OPTIONS

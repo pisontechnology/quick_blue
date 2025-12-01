@@ -47,6 +47,14 @@ class Libc {
   int recv(int fd, ffi.Pointer<ffi.Void> buffer, int count, int flags) =>
       _bindings.recv(fd, buffer, count, flags);
 
+  int getsockopt(
+    int fd,
+    int level,
+    int optionName,
+    ffi.Pointer<ffi.Void> optionValue,
+    ffi.Pointer<ffi.UnsignedInt> optionLength,
+  ) => _bindings.getsockopt(fd, level, optionName, optionValue, optionLength);
+
   int setsockopt(
     int fd,
     int level,
