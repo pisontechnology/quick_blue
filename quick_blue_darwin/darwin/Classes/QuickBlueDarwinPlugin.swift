@@ -356,7 +356,7 @@ extension QuickBlueDarwinPlugin: CBCentralManagerDelegate {
             // Prioritize advertised local name over peripheral.name
             // peripheral.name can be nil or stale, but CBAdvertisementDataLocalNameKey contains the current advertised name
             let localName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
-            let deviceName = localName ?? peripheral.name ?? ""
+            let deviceName = localName ?? ""
             if targetManufacturerData != nil {
                 if targetManufacturerData == manufacturerData {
                     scanResultListener.onEvent(
