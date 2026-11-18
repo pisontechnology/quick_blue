@@ -433,7 +433,10 @@ extension QuickBlueDarwinPlugin: CBPeripheralDelegate {
         _ peripheral: CBPeripheral,
         didDiscoverServices error: Error?
     ) {
-        for service in peripheral.services! {
+        guard error == nil, let services = peripheral.services else {
+            return
+        }
+        for service in services {
             peripheral.discoverCharacteristics(nil, for: service)
         }
     }
@@ -443,11 +446,14 @@ extension QuickBlueDarwinPlugin: CBPeripheralDelegate {
         didDiscoverCharacteristicsFor service: CBService,
         error: Error?
     ) {
+        guard error == nil, let characteristics = service.characteristics else {
+            return
+        }
         flutterApi.onServiceDiscovered(
             serviceDiscovered: PlatformServiceDiscovered(
                 deviceId: peripheral.identifier.uuidString,
                 serviceUuid: service.uuid.uuidStr,
-                characteristics: service.characteristics!.map {
+                characteristics: characteristics.map {
                     $0.uuid.uuidStr
                 }
             ),
