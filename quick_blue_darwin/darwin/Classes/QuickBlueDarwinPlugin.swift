@@ -404,6 +404,21 @@ extension QuickBlueDarwinPlugin: CBCentralManagerDelegate {
 
     public func centralManager(
         _ central: CBCentralManager,
+        didFailToConnect peripheral: CBPeripheral,
+        error: Error?
+    ) {
+        flutterApi.onConnectionStateChange(
+            stateChange: PlatformConnectionStateChange(
+                deviceId: peripheral.identifier.uuidString,
+                state: PlatformConnectionState.disconnected,
+                gattStatus: PlatformGattStatus.failure
+            ),
+            completion: { _ in }
+        )
+    }
+
+    public func centralManager(
+        _ central: CBCentralManager,
         didDisconnectPeripheral peripheral: CBPeripheral,
         error: Error?
     ) {
