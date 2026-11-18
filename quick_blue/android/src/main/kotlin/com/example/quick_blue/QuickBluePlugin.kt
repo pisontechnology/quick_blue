@@ -51,6 +51,7 @@ import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.PluginRegistry
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -65,6 +66,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.UUID
 import java.util.concurrent.Executor
+import java.util.concurrent.atomic.AtomicBoolean
 
 private const val SELECT_DEVICE_REQUEST_CODE = 10011
 
@@ -546,6 +548,19 @@ class QuickBluePlugin : FlutterPlugin, PluginRegistry.ActivityResultListener,
     }
 
     override fun openL2cap(deviceId: String, psm: Long, callback: (Result<Unit>) -> Unit) {
+        // A throw from an @async pigeon handler escapes the generated code and
+        // leaves the Dart future pending forever, so every failure goes through
+        // the callback.
+        try {
+            startL2cap(deviceId, psm, callback)
+        } catch (e: FlutterError) {
+            callback(Result.failure(e))
+        } catch (e: Exception) {
+            callback(Result.failure(FlutterError("L2CapError", e.message, null)))
+        }
+    }
+
+    private fun startL2cap(deviceId: String, psm: Long, callback: (Result<Unit>) -> Unit) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             throw FlutterError(
                 "UnsupportedAndroidVersion",
@@ -557,9 +572,7 @@ class QuickBluePlugin : FlutterPlugin, PluginRegistry.ActivityResultListener,
         val gatt = knownGatts.find { it.device.address == deviceId }
             ?: throw FlutterError("IllegalArgument", "Unknown deviceId: $deviceId", null)
         val socket = gatt.device.createInsecureL2capChannel(psm.toInt())
-        val delegate = L2CapStreamDelegate(socket, openedCallback = {
-            callback(Result.success(Unit))
-        }, closedCallback = {
+        val delegate = L2CapStreamDelegate(socket, onOpenSettled = callback, closedCallback = {
             mainThreadHandler.post {
                 l2CapSocketEventsListener.onScanResult(
                     PlatformL2CapSocketEvent(
@@ -615,7 +628,7 @@ class QuickBluePlugin : FlutterPlugin, PluginRegistry.ActivityResultListener,
 
 class L2CapStreamDelegate(
     private val socket: BluetoothSocket,
-    val openedCallback: () -> Unit,
+    private val onOpenSettled: (Result<Unit>) -> Unit,
     val closedCallback: () -> Unit,
     val streamCallback: (ByteArray) -> Unit,
     val errorCallback: (Exception) -> Unit
@@ -627,9 +640,13 @@ class L2CapStreamDelegate(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val writeDispatcher = newSingleThreadContext("L2CapWriteThread")
 
+    // Terminal callbacks run on a scope that is never cancelled, so tearing
+    // down `scope` cannot drop them.
+    private val callbackScope = CoroutineScope(Dispatchers.Main)
+    private val closed = AtomicBoolean(false)
+    private val openSettled = AtomicBoolean(false)
+
     private var readJob: Job? = null
-
-
 
     init {
         // Launch the main connection and reading logic.
@@ -638,14 +655,18 @@ class L2CapStreamDelegate(
                 // 1. Connect the socket
                 socket.connect() // This is a blocking call, so it's run within Dispatchers.IO
 
-                // Switch to Main thread to safely call UI-related callbacks if needed
-                withContext(Dispatchers.Main) {
-                    openedCallback()
+                // A close() during the blocking connect has already failed the open.
+                if (closed.get()) {
+                    return@launch
                 }
+
+                settleOpen(Result.success(Unit))
 
                 // 2. Start the read loop
                 startReadLoop()
 
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 // Catch connection errors or any other exception during setup
                 handleError(e)
@@ -701,17 +722,47 @@ class L2CapStreamDelegate(
         closeConnection()
     }
 
-    private fun handleError(e: Exception) {
-        // Ensure error callback is on the main thread
-        scope.launch(Dispatchers.Main) {
-            errorCallback(e)
+    private fun settleOpen(result: Result<Unit>) {
+        if (!openSettled.compareAndSet(false, true)) return
+        callbackScope.launch {
+            onOpenSettled(result)
         }
-        closeConnection()
+    }
+
+    private fun handleError(e: Exception) {
+        finish(e)
     }
 
     private fun closeConnection() {
-        // Cancels all coroutines started in this scope (including the read loop).
-        // It's idempotent; calling it multiple times has no effect.
+        finish(null)
+    }
+
+    // The read loop's finally block, handleError() and close() can all race to
+    // here; claiming `closed` first keeps every terminal callback to one call
+    // and stops an error from being reported after the closed event.
+    private fun finish(failure: Exception?) {
+        if (!closed.compareAndSet(false, true)) return
+
+        // close() can cancel the connect coroutine before it runs, so the open
+        // must also be settled here or the Dart future never completes.
+        settleOpen(
+            Result.failure(
+                if (failure == null) {
+                    FlutterError(
+                        "L2CapClosed",
+                        "The L2CAP socket was closed before the connection was established",
+                        null
+                    )
+                } else {
+                    FlutterError(
+                        "L2CapError",
+                        failure.message ?: "The L2CAP connection failed",
+                        null
+                    )
+                }
+            )
+        )
+
         scope.cancel()
         writeDispatcher.close()
 
@@ -721,9 +772,10 @@ class L2CapStreamDelegate(
             // Can be ignored, as we are cleaning up anyway.
         }
 
-        // Use a new coroutine on the Main dispatcher to ensure the callback
-        // is not called from a cancelled scope.
-        CoroutineScope(Dispatchers.Main).launch {
+        callbackScope.launch {
+            if (failure != null) {
+                errorCallback(failure)
+            }
             closedCallback()
         }
     }

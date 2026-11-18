@@ -404,6 +404,21 @@ extension QuickBlueDarwinPlugin: CBCentralManagerDelegate {
 
     public func centralManager(
         _ central: CBCentralManager,
+        didFailToConnect peripheral: CBPeripheral,
+        error: Error?
+    ) {
+        flutterApi.onConnectionStateChange(
+            stateChange: PlatformConnectionStateChange(
+                deviceId: peripheral.identifier.uuidString,
+                state: PlatformConnectionState.disconnected,
+                gattStatus: PlatformGattStatus.failure
+            ),
+            completion: { _ in }
+        )
+    }
+
+    public func centralManager(
+        _ central: CBCentralManager,
         didDisconnectPeripheral peripheral: CBPeripheral,
         error: Error?
     ) {
@@ -433,7 +448,10 @@ extension QuickBlueDarwinPlugin: CBPeripheralDelegate {
         _ peripheral: CBPeripheral,
         didDiscoverServices error: Error?
     ) {
-        for service in peripheral.services! {
+        guard error == nil, let services = peripheral.services else {
+            return
+        }
+        for service in services {
             peripheral.discoverCharacteristics(nil, for: service)
         }
     }
@@ -443,11 +461,14 @@ extension QuickBlueDarwinPlugin: CBPeripheralDelegate {
         didDiscoverCharacteristicsFor service: CBService,
         error: Error?
     ) {
+        guard error == nil, let characteristics = service.characteristics else {
+            return
+        }
         flutterApi.onServiceDiscovered(
             serviceDiscovered: PlatformServiceDiscovered(
                 deviceId: peripheral.identifier.uuidString,
                 serviceUuid: service.uuid.uuidStr,
-                characteristics: service.characteristics!.map {
+                characteristics: characteristics.map {
                     $0.uuid.uuidStr
                 }
             ),
